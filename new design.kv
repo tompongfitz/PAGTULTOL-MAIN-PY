@@ -1,0 +1,1812 @@
+#:kivy 2.1.0
+#:import FadeTransition kivy.uix.screenmanager.FadeTransition
+
+# --- CUSTOM WIDGET FOR WIFI SCREEN ONLY ---
+<WifiRoundedBtn@Button>:
+    background_normal: ''
+    # We use background_color directly to store the theme color
+    background_color: 0.2, 0.6, 1, 1 
+    canvas.before:
+        Color:
+            # We use self.background_color for the drawing instruction
+            rgba: self.background_color if self.state == 'normal' else [x*0.8 for x in self.background_color]
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [6,]
+    bold: True
+    color: 1, 1, 1, 1
+
+# --- MEDICAL POWER OPTIONS POPUP ---
+<PowerPopup@BoxLayout>:
+    orientation: "vertical"
+    padding: "20dp"
+    spacing: "10dp"
+    
+    # Sterile Medical Background
+    canvas.before:
+        Color:
+            rgba: 0.95, 0.96, 0.98, 1  # Very light clinical blue-grey
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    # Header Section
+    BoxLayout:
+        orientation: "vertical"
+        size_hint_y: 0.3
+        spacing: "2dp"
+        
+        Label:
+            text: "SYSTEM POWER CONTROL"
+            color: 0.1, 0.2, 0.4, 1  # Dark Navy (Professional)
+            font_size: "15sp"
+            bold: True
+            halign: "center"
+            valign: "bottom"
+            text_size: self.size
+
+        Label:
+            text: "Select maintenance protocol."
+            color: 0.5, 0.6, 0.7, 1  # Soft Grey-Blue
+            font_size: "11sp"
+            halign: "center"
+            valign: "top"
+            text_size: self.size
+
+    # Action Buttons (Rounded & Elevated look)
+    BoxLayout:
+        spacing: "15dp"
+        size_hint_y: 0.5
+        padding: [0, "10dp", 0, "10dp"]
+        
+        # REBOOT BUTTON (Maintenance Blue)
+        Button:
+            id: btn_reboot
+            text: "REBOOT\nSYSTEM"
+            halign: "center"
+            background_normal: ''
+            background_color: 0.2, 0.6, 1, 1
+            color: 1, 1, 1, 1
+            bold: True
+            font_size: "12sp"
+            # Add rounded aesthetic manually since it's a standard Button
+            canvas.before:
+                Color:
+                    rgba: 0, 0, 0, 0.1  # Shadow
+                RoundedRectangle:
+                    pos: (self.x+2, self.y-2)
+                    size: self.size
+                    radius: [6,]
+
+        # SHUTDOWN BUTTON (Critical Red)
+        Button:
+            id: btn_shutdown
+            text: "POWER\nOFF"
+            halign: "center"
+            background_normal: ''
+            background_color: 0.85, 0.3, 0.3, 1
+            color: 1, 1, 1, 1
+            bold: True
+            font_size: "12sp"
+            canvas.before:
+                Color:
+                    rgba: 0, 0, 0, 0.1  # Shadow
+                RoundedRectangle:
+                    pos: (self.x+2, self.y-2)
+                    size: self.size
+                    radius: [6,]
+    
+    # CANCEL BUTTON (Subtle / Integrated)
+    Button:
+        id: btn_cancel
+        text: "DISMISS"
+        size_hint_y: 0.2
+        background_normal: ''
+        background_color: 0.85, 0.85, 0.88, 1
+        color: 0.4, 0.4, 0.45, 1
+        bold: True
+        font_size: "10sp"
+
+
+
+
+
+
+# 1. WINDOW MANAGER
+<WindowManager>:
+    transition: FadeTransition()
+    BlackScreen:   
+    WelcomeScreen: 
+    MenuScreen:
+    VitalSignsScreen:
+    HistoryScreen:
+    ChatScreen:
+    WifiScreen:
+    SettingsScreen:
+    DateTimeScreen:
+    AlarmScreen:
+
+# 2. BLACK SCREEN (Startup)
+<BlackScreen>:
+    name: "black"
+    canvas.before:
+        Color:
+            rgba: 0, 0, 0, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+# 3. WELCOME SCREEN
+<WelcomeScreen>:
+    name: "welcome"
+    canvas.before:
+        Color:
+            rgba: 1, 1, 1, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+        Color:
+            rgba: 0.2, 0.6, 1, 1
+        Line:
+            width: 5
+            rectangle: self.x, self.y, self.width, self.height
+
+    BoxLayout:
+        orientation: "vertical"
+        spacing: "10dp"
+        padding: "20dp"
+        pos_hint: {"center_x": 0.5, "center_y": 0.5}
+        size_hint: 0.8, 0.8
+
+        Image:
+            source: "ICENHS.png"
+            size_hint_y: 0.5
+            allow_stretch: True
+            keep_ratio: True
+
+        Label:
+            text: "Welcome to PAGTULTOL!"
+            font_size: "24sp"
+            bold: True
+            color: 0.2, 0.6, 1, 1
+            size_hint_y: None
+            height: self.texture_size[1]
+
+        Label:
+            text: "Your Intelligent Assistant"
+            font_size: "14sp"
+            color: 0.5, 0.5, 0.5, 1
+            size_hint_y: None
+            height: self.texture_size[1]
+
+        Widget:
+            size_hint_y: 0.1
+
+        Button:
+            text: "Get Started"
+            font_size: "14sp"
+            bold: True
+            size_hint: None, None
+            size: "160dp", "40dp"
+            pos_hint: {"center_x": 0.5}
+            background_normal: ''
+            background_color: 0.2, 0.6, 1, 1
+            on_release: 
+                root.manager.current = "menu"
+
+# 4. MENU SCREEN (MEDICAL DASHBOARD)
+<MenuScreen>:
+    name: "menu"
+    canvas.before:
+        Color:
+            rgba: 0.9, 0.9, 0.92, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: "10dp"
+        spacing: "10dp"
+
+        # HEADER BAR
+        BoxLayout:
+            size_hint_y: None
+            height: "50dp"
+            padding: "5dp"
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1 
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [8,]
+            
+            # Left: Icon
+            Image:
+                source: "ICENHS.png"
+                size_hint_x: None
+                width: "40dp"
+                allow_stretch: True
+                keep_ratio: True
+            
+            # Middle: Title
+            BoxLayout:
+                orientation: "vertical"
+                size_hint_x: 0.6
+                padding: ["10dp", "2dp", 0, "2dp"]
+                
+                Label:
+                    text: "PAGTULTOL TRANSMITTER"
+                    font_size: "16sp"
+                    bold: True
+                    color: 0.1, 0.2, 0.4, 1 
+                    halign: "left"
+                    valign: "bottom"
+                    text_size: self.size
+
+                Label:
+                    text: "MAIN CONTROL DASHBOARD"
+                    font_size: "10sp"
+                    color: 0.5, 0.5, 0.5, 1 
+                    halign: "left"
+                    valign: "top"
+                    text_size: self.size
+
+            # Right: Clock
+            BoxLayout:
+                orientation: "vertical"
+                size_hint_x: 0.3
+                padding: ["0dp", "2dp", "5dp", "2dp"]
+                
+                Label:
+                    id: menu_clock
+                    text: "00:00:00"
+                    font_size: "14sp"
+                    bold: True
+                    color: 0.2, 0.4, 0.8, 1
+                    halign: "right"
+                    valign: "bottom"
+                    text_size: self.size
+                    
+                Label:
+                    id: menu_date
+                    text: "Jan 01, 2025"
+                    font_size: "11sp"
+                    color: 0.4, 0.4, 0.4, 1
+                    halign: "right"
+                    valign: "top"
+                    text_size: self.size
+
+        # ACTION TILES
+        GridLayout:
+            cols: 2
+            spacing: "10dp"
+            size_hint_y: 1
+
+            # TILE 1: AI ASSISTANT
+            Button:
+                id: ai_btn
+                background_normal: ''
+                background_color: 0.2, 0.6, 1, 1 
+                markup: True
+                text: "[size=18][b]AI ASSISTANT[/b][/size]\n[size=12]Interactive Chat Module\nSystem Status: [color=AAFFAA]ONLINE[/color][/size]"
+                halign: "center"
+                valign: "middle"
+                on_release: root.manager.current = "chat"
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.1 
+                    Line:
+                        width: 1
+                        rectangle: (self.x, self.y, self.width, self.height)
+
+            # TILE 2: MEDICAL SCANNER
+            Button:
+                background_normal: ''
+                background_color: 0.07, 0.5, 0.17, 1 
+                markup: True
+                text: "[size=18][b]VITALS SCANNER[/b][/size]\n[size=12]Temperature Sensor\nSensor Status: [color=AAFFAA]READY[/color][/size]"
+                halign: "center"
+                valign: "middle"
+                on_release: root.go_to_vitals()
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.1
+                    Line:
+                        width: 1
+                        rectangle: (self.x, self.y, self.width, self.height)
+
+            # TILE 3: WI-FI SETTINGS
+            Button:
+                id: wifi_btn
+                background_normal: ''
+                background_color: 0.5, 0.3, 0.7, 1 
+                markup: True
+                text: "[size=18][b]WI-FI SETTINGS[/b][/size]\n[size=12]Network Configuration\nStatus: [color=FFFF00]CHECKING...[/color][/size]"
+                halign: "center"
+                valign: "middle"
+                on_release: root.go_to_wifi()
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.1
+                    Line:
+                        width: 1
+                        rectangle: (self.x, self.y, self.width, self.height)
+
+            # TILE 4: PATIENT LOGS (Moved from Vitals)
+            Button:
+                background_normal: ''
+                background_color: 0.5, 0.5, 0.5, 1 
+                markup: True
+                text: "[size=18][b]PATIENT LOGS[/b][/size]\n[size=12]View Data History\nRecords: [color=AAFFAA]ACCESS[/color][/size]"
+                halign: "center"
+                valign: "middle"
+                on_release: root.manager.current = "history"
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.1
+                    Line:
+                        width: 1
+                        rectangle: (self.x, self.y, self.width, self.height)
+
+        # FOOTER
+        BoxLayout:
+            size_hint_y: None
+            height: "35dp"
+            spacing: "10dp"
+            padding: ["5dp", 0, "5dp", "5dp"]
+
+            # EXISTING POWER BUTTON
+            Button:
+                text: "POWER"
+                size_hint_x: None
+                width: "80dp"
+                background_normal: ''
+                background_color: 0.8, 0.3, 0.3, 1
+                font_size: "11sp"
+                bold: True
+                on_release: root.show_power_options()
+                canvas.before:
+                    Color:
+                        rgba: 0,0,0,0.1
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4,]
+
+            # --- NEW SETTINGS BUTTON ---
+            Button:
+                text: "SETTINGS"
+                size_hint_x: None
+                width: "90dp"
+                background_normal: ''
+                background_color: 0.3, 0.35, 0.4, 1  # Dark Slate Blue/Grey
+                font_size: "11sp"
+                bold: True
+                on_release: root.go_to_settings()
+                canvas.before:
+                    Color:
+                        rgba: 0,0,0,0.1
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4,]
+
+            # EXISTING SYSTEM ID LABEL
+            Label:
+                text: "SYSTEM ID: 000-000-001  |  © 2026 Iligan City East National High School. All rights reserved."
+                color: 0.6, 0.6, 0.6, 1
+                font_size: "10sp"
+                halign: "right"
+                valign: "middle"
+                text_size: self.size
+
+
+
+
+
+
+
+# 5. VITAL SIGNS SCREEN
+<VitalSignsScreen>:
+    name: "vitals"
+    canvas.before:
+        Color:
+            rgba: 0.9, 0.9, 0.92, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: "5dp"
+        spacing: "5dp"
+
+        # HEADER
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: "40dp"
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [5,]
+            
+            Label:
+                text: "  PAGTULTOL BP-SCAN"
+                bold: True
+                color: 0.2, 0.2, 0.6, 1
+                font_size: "16sp"
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+                size_hint_x: 0.6
+
+            Label:
+                id: vitals_status
+                text: "STANDBY"
+                bold: True
+                color: 0.5, 0.5, 0.5, 1
+                font_size: "12sp"
+                halign: "right"
+                valign: "middle"
+                text_size: self.size
+                size_hint_x: 0.4
+                padding_x: "10dp"
+
+        # MONITOR SECTION
+        BoxLayout:
+            orientation: "horizontal"
+            spacing: "10dp"
+
+            # LEFT: MONITOR
+            BoxLayout:
+                orientation: "vertical"
+                size_hint_x: 0.65
+                padding: "10dp"
+                canvas.before:
+                    Color:
+                        rgba: 0.1, 0.12, 0.15, 1
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [8,]
+                    Color:
+                        rgba: 0.2, 0.6, 1, 0.3
+                    Line:
+                        width: 2
+                        rounded_rectangle: (self.x, self.y, self.width, self.height, 8)
+
+                Label:
+                    text: "BLOOD PRESSURE"
+                    color: 0.6, 0.7, 0.8, 1
+                    font_size: "12sp"
+                    size_hint_y: 0.15
+                    halign: "left"
+                    text_size: self.size
+
+                Label:
+                    id: vitals_temp
+                    text: "-SYSTOLIC-"
+                    color: 0.2, 0.9, 1, 1 
+                    font_size: "70sp" 
+                    bold: True
+                    size_hint_y: 0.7
+                    
+                Label:
+                    id: vitals_dia
+                    text: "-DIASTOLIC-"
+                    color: 0.2, 0.9, 1, 1 
+                    font_size: "70sp" 
+                    bold: True
+                    size_hint_y: 0.7
+                                
+                Label:
+                    id: vitals_bpm
+                    text: "-HEART RATE-"
+                    color: 0.9, 0.9, 9, 1 
+                    font_size: "40sp" 
+                    bold: True
+                    size_hint_y: 0.7                
+                
+
+            # RIGHT: CONTROL PANEL
+            BoxLayout:
+                orientation: "vertical"
+                size_hint_x: 0.35
+                spacing: "8dp"
+
+                Button:
+                    id: btn_scan
+                    text: "START\nMONITORING"
+                    halign: "center"
+                    background_normal: ''
+                    background_color: 0.2, 0.6, 1, 1 
+                    font_size: "24sp"
+                    bold: True
+                    on_release: root.toggle_monitoring()
+
+            #   Button:
+            #       id: btn_record
+            #       text: "RECORD\nREADING"
+            #       halign: "center"
+            #       background_normal: ''
+            #       background_color: 0.07, 0.5, 0.17, 1 
+            #       font_size: "12sp"
+            #       bold: True
+            #       # Disabled normal color (greyed out look)
+            #       disabled_color: 0.5, 0.5, 0.5, 1
+            #       on_release: root.save_reading()
+
+                Label:
+                    text: "CLASSIFICATION"
+                    background_normal: ''
+                    background_color: 0.07, 0.5, 0.17, 0 
+                    color: 0, 0, 0, 1 
+                    font_size: "26sp" 
+                    bold: True
+                    size_hint_y: 1
+                    
+                Label:
+                    id: classification
+                    text: "----"
+                    background_normal: ''
+                    background_color: 0.07, 0.5, 0.17, 0 
+                    color: 0, 0, 0, 1 
+                    font_size: "20sp" 
+                    bold: True
+                    size_hint_y: 0.5
+                
+                Widget:
+                    size_hint_y: 0.3
+                    
+
+                Button:
+                    id: btn_back
+                    text: "EXIT / BACK"
+                    size_hint_y: 0.3
+                    background_normal: ''
+                    background_color: 0.3, 0.3, 0.3, 1
+                    font_size: "12sp"
+                    on_release: root.go_back_menu()
+
+# 6. HISTORY SCREEN
+<HistoryScreen>:
+    name: "history"
+    canvas.before:
+        Color:
+            rgba: 0.9, 0.9, 0.92, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: "10dp"
+        spacing: "10dp"
+
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: "40dp"
+            
+            Image:
+                source: "ICENHS.png" 
+                size_hint_x: None
+                width: "40dp"
+                allow_stretch: True
+            
+            Label:
+                text: "  PATIENT DATA LOGS"
+                font_size: "18sp"
+                bold: True
+                color: 0.2, 0.2, 0.6, 1
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+
+        ScrollView:
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [5,]
+                Color:
+                    rgba: 0.7, 0.7, 0.7, 1
+                Line:
+                    width: 1
+                    rounded_rectangle: (self.x, self.y, self.width, self.height, 5)
+            
+            GridLayout:
+                id: history_grid
+                cols: 1
+                size_hint_y: None
+                height: self.minimum_height
+                padding: "5dp"
+                spacing: "5dp"
+
+        BoxLayout:
+            orientation: "horizontal"
+            size_hint_y: None
+            height: "45dp"
+            spacing: "15dp"
+
+            Button:
+                id: btn_clear_db
+                text: "CLEAR DATABASE"
+                background_normal: ''
+                background_color: 0.8, 0.3, 0.3, 1
+                font_size: "12sp"
+                bold: True
+                disabled_color: 0.6, 0.6, 0.6, 1
+                on_release: root.clear_history()
+
+            Button:
+                text: "RETURN TO MAIN MENU"
+                background_normal: ''
+                background_color: 0.2, 0.4, 0.6, 1
+                font_size: "12sp"
+                bold: True
+                on_release: root.manager.current = "menu"
+
+# --- HISTORY ROW TEMPLATE ---
+<HistoryRow>:
+    orientation: 'horizontal'
+    size_hint_y: None
+    height: "35dp"
+    padding: "3dp"
+    canvas.before:
+        Color:
+            rgba: 0.95, 0.95, 0.95, 1
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [4,]
+    
+    Label:
+        text: root.text_content
+        color: 0.2, 0.2, 0.2, 1
+        text_size: self.size
+        halign: 'left'
+        valign: 'middle'
+        padding_x: "5dp"
+        font_size: "12sp"
+        bold: True
+
+    Button:
+        text: "X" 
+        size_hint_x: None
+        width: "35dp"
+        background_normal: ''
+        background_color: 0, 0, 0, 0 
+        color: 0.9, 0.1, 0.1, 1 
+        font_size: "16sp"
+        bold: True
+        on_release: app.root.get_screen('history').delete_record(root)
+        canvas.before:
+            Color:
+                rgba: 0.9, 0.9, 0.9, 1
+            Line:
+                width: 1
+                rounded_rectangle: (self.x, self.y, self.width, self.height, 4)
+
+# 7. CHAT UI - MEDICAL AESTHETIC THEME
+<ChatScreen>:
+    name: "chat"
+    canvas.before:
+        Color:
+            rgba: 1, 1, 1, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: 0
+        spacing: 0
+
+        # Header Bar
+        BoxLayout:
+            size_hint_y: None
+            height: "45dp"
+            spacing: "10dp"
+            padding: ["10dp", 0, "10dp", 0]
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+                Color:
+                    rgba: 0.9, 0.9, 0.9, 1
+                Line:
+                    points: [self.x, self.y, self.x + self.width, self.y]
+                    width: 1
+
+            Button:
+                text: "<"
+                size_hint_x: None
+                width: "30dp"
+                background_normal: ''
+                background_color: 0, 0, 0, 0
+                color: 0.2, 0.2, 0.2, 1
+                font_size: "20sp"
+                bold: True
+                on_press: root.go_back_menu()
+
+            # Bot Avatar & Info
+            BoxLayout:
+                orientation: "horizontal"
+                
+                # Avatar Placeholder
+                Widget:
+                    size_hint_x: None
+                    width: "40dp"
+                    canvas:
+                        Color:
+                            rgba: 0.0, 0.65, 0.6, 1
+                        Ellipse:
+                            pos: self.x, self.y + 5
+                            size: 30, 30
+                        Color:
+                            rgba: 1, 1, 1, 1
+                        Line:
+                            width: 1.5
+                            circle: (self.x + 15, self.y + 20, 8) 
+                        Line:
+                            width: 1.5
+                            circle: (self.x + 15, self.y + 20, 0) 
+
+                BoxLayout:
+                    orientation: "vertical"
+                    valign: "middle"
+                    padding: [5, 5, 0, 5]
+                    
+                    Label:
+                        text: "Kairos"
+                        bold: True
+                        font_size: "14sp"
+                        color: 0.1, 0.1, 0.1, 1
+                        halign: "left"
+                        valign: "bottom"
+                        text_size: self.size
+                    
+                    Label:
+                        id: ai_status_label
+                        text: "Checking status..."
+                        font_size: "10sp"
+                        color: 0.5, 0.5, 0.5, 1
+                        halign: "left"
+                        valign: "top"
+                        text_size: self.size
+
+            Button:
+                text: "Clear"
+                size_hint_x: None
+                width: "50dp"
+                background_normal: ''
+                background_color: 0, 0, 0, 0
+                color: 0.8, 0.3, 0.3, 1
+                font_size: "12sp"
+                bold: True
+                valign: "middle"
+                on_release: root.clear_chat_history()
+
+        # Chat Scroll Area
+        ScrollView:
+            id: messages_scroll
+            size_hint_y: 1
+            do_scroll_x: False
+            
+            bar_width: 10
+            scroll_type: ['bars', 'content']
+            bar_color: 0.0, 0.65, 0.6, 0.7
+            bar_inactive_color: 0.8, 0.8, 0.8, 0.5
+            bar_margin: 2
+            
+            canvas.before:
+                Color:
+                    rgba: 0.97, 0.97, 0.98, 1 
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+
+            GridLayout:
+                id: messages_layout
+                cols: 1
+                size_hint_y: None
+                height: self.minimum_height
+                spacing: "10dp"
+                padding: ["10dp", "15dp", "10dp", "15dp"]
+
+        # Input Bar
+        BoxLayout:
+            size_hint_y: None
+            height: "50dp"
+            spacing: "5dp"
+            padding: ["10dp", "8dp", "10dp", "8dp"]
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+                Color:
+                    rgba: 0.92, 0.92, 0.92, 1
+                Line:
+                    points: [self.x, self.y + self.height, self.x + self.width, self.y + self.height]
+                    width: 1
+
+            TextInput:
+                id: input_field
+                multiline: True
+                hint_text: "Ask Kairos..."
+                size_hint_x: 0.85
+                font_size: "14sp"
+                padding: [10, 8] 
+
+            Button:
+                text: "Send"
+                size_hint_x: 0.15
+                background_normal: ''
+                background_color: 0.0, 0.65, 0.6, 1
+                color: 1, 1, 1, 1
+                bold: True
+                font_size: "14sp"
+                on_release: root.send_message()
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [10,]
+
+        # KEYBOARD CONTAINER (Reduced height for 480p)
+        BoxLayout:
+            id: keyboard_layout
+            orientation: "vertical"
+            size_hint_y: None
+            height: "160dp"
+            size_hint_x: 0.9
+            pos_hint: {"center_x": 0.5}
+            spacing: 2
+            padding: [5, 5]
+            canvas.before:
+                Color:
+                    rgba: 0.9, 0.9, 0.9, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [8,]
+
+# --- WIFI SCREEN ---
+<WifiScreen>:
+    name: "wifi"
+    canvas.before:
+        Color:
+            rgba: 0.94, 0.96, 0.99, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: ["15dp", "15dp", "15dp", "15dp"]
+        spacing: "10dp"
+
+        # HEADER CARD
+        BoxLayout:
+            size_hint_y: None
+            height: "50dp"
+            padding: "8dp"
+            spacing: "10dp"
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [10,]
+                Color:
+                    rgba: 0.8, 0.8, 0.8, 0.3
+                Line:
+                    width: 1
+                    rounded_rectangle: (self.x, self.y, self.width, self.height, 10)
+
+            WifiRoundedBtn:
+                text: "BACK"
+                size_hint_x: None
+                width: "70dp"
+                # Use standard background_color instead of custom btn_color
+                background_color: 0.5, 0.5, 0.5, 1
+                font_size: "12sp"
+                on_release: root.go_back_menu()
+
+            BoxLayout:
+                orientation: "vertical"
+                valign: "middle"
+                size_hint_x: 0.7 
+                
+                Label:
+                    text: "WI-FI CONFIGURATION"
+                    font_size: "16sp"
+                    bold: True
+                    color: 0.2, 0.2, 0.4, 1
+                    text_size: self.size
+                    halign: "left"
+                    valign: "bottom"
+                
+                Label:
+                    text: "Manage network connectivity"
+                    font_size: "10sp"
+                    color: 0.5, 0.5, 0.6, 1
+                    text_size: self.size
+                    halign: "left"
+                    valign: "top"
+            
+            # --- WIFI TOGGLE SWITCH ---
+            BoxLayout:
+                orientation: "vertical"
+                size_hint_x: 0.3
+                padding: [0, 2, 0, 2]
+                Label:
+                    text: "Wi-Fi Enabled"
+                    font_size: "10sp"
+                    color: 0.4, 0.4, 0.4, 1
+                    size_hint_y: None
+                    height: "15dp"
+                Switch:
+                    id: wifi_switch
+                    size_hint: None, None
+                    size: "40dp", "25dp"
+                    pos_hint: {'center_x': 0.5}
+                    active: True
+                    on_active: root.toggle_wifi_state(self.active)
+
+
+        # SWITCHABLE CONTENT AREA (List vs Password)
+        ScreenManager:
+            id: wifi_sm
+            
+            # --- STATE 1: NETWORK LIST ---
+            Screen:
+                name: "list"
+                BoxLayout:
+                    orientation: "vertical"
+                    spacing: "10dp"
+                    
+                    # Control Bar
+                    BoxLayout:
+                        size_hint_y: None
+                        height: "40dp"
+                        spacing: "10dp"
+                        
+                        WifiRoundedBtn:
+                            text: "SCAN FOR NETWORKS"
+                            size_hint_x: 0.5
+                            font_size: "12sp"
+                            background_color: 0.0, 0.7, 0.7, 1
+                            on_release: root.scan_wifi()
+                        
+                        Label:
+                            id: wifi_status
+                            text: "System Ready."
+                            color: 0.3, 0.3, 0.3, 1
+                            halign: "right"
+                            valign: "middle"
+                            font_size: "12sp"
+                            text_size: self.size
+                            italic: True
+
+                    # Network List Container
+                    BoxLayout:
+                        orientation: "vertical"
+                        size_hint_x: 0.9
+                        pos_hint: {"center_x": 0.5}
+                        canvas.before:
+                            Color:
+                                rgba: 1, 1, 1, 1
+                            RoundedRectangle:
+                                pos: self.pos
+                                size: self.size
+                                radius: [10,]
+                            Color:
+                                rgba: 0.85, 0.85, 0.9, 1
+                            Line:
+                                width: 1.5
+                                rounded_rectangle: (self.x, self.y, self.width, self.height, 10)
+
+                        Label:
+                            text: "Available Networks"
+                            size_hint_y: None
+                            height: "30dp"
+                            color: 0.4, 0.4, 0.5, 1
+                            bold: True
+                            font_size: "12sp"
+                            canvas.before:
+                                Color:
+                                    rgba: 0.97, 0.97, 0.98, 1
+                                RoundedRectangle:
+                                    pos: self.pos
+                                    size: self.size
+                                    radius: [10, 10, 0, 0]
+
+                        ScrollView:
+                            do_scroll_x: False
+                            do_scroll_y: True
+                            bar_width: 25
+                            bar_color: 0.2, 0.6, 1, 0.7
+                            bar_inactive_color: 0.8, 0.8, 0.8, 0.5
+                            effect_cls: "DampedScrollEffect"
+                            scroll_type: ['bars', 'content']
+                            scroll_distance: "10dp"
+                            scroll_timeout: 250
+                            
+                            GridLayout:
+                                id: wifi_list_layout
+                                cols: 1
+                                size_hint_y: None
+                                height: self.minimum_height
+                                padding: ["10dp", "10dp", "40dp", "10dp"]
+                                spacing: "5dp"
+
+            # --- STATE 2: PASSWORD ENTRY + KEYBOARD ---
+            Screen:
+                name: "password"
+                BoxLayout:
+                    orientation: "vertical"
+                    spacing: "8dp"
+                    padding: ["30dp", 0, "30dp", 0]
+                    
+                    Label:
+                        id: pass_prompt
+                        text: "Enter Password for Network"
+                        font_size: "16sp"
+                        color: 0.2, 0.2, 0.4, 1
+                        size_hint_y: None
+                        height: "30dp"
+                    
+                    TextInput:
+                        id: pass_input
+                        password: True
+                        multiline: False
+                        size_hint_y: None
+                        height: "40dp"
+                        font_size: "18sp"
+                        padding: [8, 8]
+                        background_normal: ''
+                        background_color: 1, 1, 1, 1
+                        foreground_color: 0, 0, 0, 1
+                        cursor_color: 0, 0, 0, 1
+                        canvas.after:
+                            Color:
+                                rgba: 0.2, 0.6, 1, 0.5
+                            Line:
+                                width: 1.2
+                                rectangle: (self.x, self.y, self.width, self.height)
+
+                    BoxLayout:
+                        size_hint_y: None
+                        height: "45dp"
+                        spacing: "15dp"
+                        padding: [0, "5dp", 0, "5dp"]
+
+                        WifiRoundedBtn:
+                            text: "CANCEL"
+                            font_size: "12sp"
+                            background_color: 0.6, 0.6, 0.6, 1
+                            on_release: root.cancel_password()
+
+                        WifiRoundedBtn:
+                            text: "CONNECT"
+                            font_size: "12sp"
+                            background_color: 0.0, 0.7, 0.4, 1
+                            on_release: root.connect_wifi()
+                    
+                    # KEYBOARD CONTAINER
+                    BoxLayout:
+                        id: wifi_keyboard
+                        orientation: "vertical"
+                        size_hint_y: None
+                        height: "160dp"
+                        spacing: 2
+                        padding: [5, 5]
+                        canvas.before:
+                            Color:
+                                rgba: 0.9, 0.9, 0.9, 1
+                            RoundedRectangle:
+                                pos: self.pos
+                                size: self.size
+                                radius: [8,]
+
+# --- CHAT BUBBLES ---
+<ChatBubble@BoxLayout>:
+    orientation: "vertical"
+    size_hint_y: None
+    padding: ["10dp", "8dp", "10dp", "8dp"]
+    canvas.before:
+        Color:
+            rgba: 0, 0, 0, 0.05
+        RoundedRectangle:
+            pos: (self.x + 2, self.y - 2)
+            size: self.size
+            radius: [0, 10, 10, 10]
+        Color:
+            rgba: 1, 1, 1, 1
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [0, 10, 10, 10]
+
+<UserBubble@BoxLayout>:
+    orientation: "vertical"
+    size_hint_y: None
+    padding: ["10dp", "8dp", "10dp", "8dp"]
+    canvas.before:
+        Color:
+            rgba: 0.0, 0.65, 0.6, 1 
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [10, 0, 10, 10]
+
+# --- CONFIRM POPUP ---
+<ConfirmPopup@BoxLayout>:
+    orientation: "vertical"
+    padding: "15dp"
+    spacing: "15dp"
+    
+    canvas.before:
+        Color:
+            rgba: 1, 1, 1, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+            
+    Label:
+        id: confirm_msg
+        text: "Confirm Action?"
+        font_size: "16sp"
+        color: 0.2, 0.2, 0.2, 1
+        halign: "center"
+        valign: "middle"
+        text_size: self.size
+        size_hint_y: 0.7
+
+    BoxLayout:
+        size_hint_y: 0.3
+        spacing: "15dp"
+        
+        Button:
+            id: cancel_button
+            text: "No, Cancel"
+            background_normal: ''
+            background_color: 0.5, 0.5, 0.5, 1
+            font_size: "14sp"
+            bold: True
+            
+        Button:
+            id: confirm_button
+            text: "Yes, Clear"
+            background_normal: ''
+            background_color: 0.2, 0.6, 1, 1
+            font_size: "14sp"
+            bold: True
+
+# --- SETTINGS SCREEN ---
+<SettingsScreen>:
+    name: "settings"
+    canvas.before:
+        Color:
+            rgba: 0.94, 0.96, 0.99, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: "15dp"
+        spacing: "10dp"
+
+        # HEADER
+        BoxLayout:
+            size_hint_y: None
+            height: "50dp"
+            padding: "8dp"
+            spacing: "10dp"
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [10,]
+                Color:
+                    rgba: 0.8, 0.8, 0.8, 0.3
+                Line:
+                    width: 1
+                    rounded_rectangle: (self.x, self.y, self.width, self.height, 10)
+
+            # Back Button
+            Button:
+                text: "BACK"
+                size_hint_x: None
+                width: "70dp"
+                background_normal: ''
+                background_color: 0.5, 0.5, 0.5, 1
+                font_size: "12sp"
+                bold: True
+                on_release: root.go_back_menu()
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.1
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [6,]
+
+            Label:
+                text: "SYSTEM SETTINGS"
+                font_size: "16sp"
+                bold: True
+                color: 0.2, 0.2, 0.4, 1
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+
+        # BUTTON CONTAINER
+        BoxLayout:
+            orientation: "vertical"
+            padding: "20dp"
+            spacing: "15dp"
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [10,]
+            
+            # --- ALARM BUTTON ---
+            Button:
+                text: "ALARM CONFIGURATION"
+                size_hint_y: None
+                height: "60dp"
+                background_normal: ''
+                background_color: 0.2, 0.6, 0.8, 1  # Professional Blue
+                font_size: "14sp"
+                bold: True
+                on_release: root.open_alarm_settings()
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.1
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [8,]
+            
+            # --- CHANGE DATE AND TIME BUTTON ---
+            Button:
+                text: "CHANGE DATE AND TIME"
+                size_hint_y: None
+                height: "60dp"
+                background_normal: ''
+                background_color: 0.2, 0.6, 0.8, 1
+                font_size: "14sp"
+                bold: True
+                on_release: root.open_datetime_settings()
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.1
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [8,]
+
+            # Spacer to push buttons to top
+            Widget:
+
+
+# --- DATE AND TIME SCREEN ---
+# --- DATE AND TIME SCREEN ---
+<DateTimeScreen>:
+    name: "datetime"
+    canvas.before:
+        Color:
+            rgba: 0.94, 0.96, 0.99, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: "20dp"
+        spacing: "10dp"
+
+        # HEADER
+        Label:
+            text: "SET SYSTEM CLOCK"
+            font_size: "18sp"
+            bold: True
+            color: 0.2, 0.2, 0.4, 1
+            size_hint_y: None
+            height: "40dp"
+
+        # --- TIME SECTION ---
+        Label:
+            text: "TIME (HH : MM : AM/PM)"
+            font_size: "12sp"
+            color: 0.5, 0.5, 0.5, 1
+            size_hint_y: None
+            height: "30dp"
+
+        GridLayout:
+            cols: 3
+            spacing: "10dp"
+            size_hint_y: None
+            height: "100dp"
+
+            # HOUR
+            BoxLayout:
+                orientation: "vertical"
+                Button:
+                    text: "+"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("hour", 1)
+                Label:
+                    text: root.display_hour
+                    color: 0,0,0,1
+                    bold: True
+                    font_size: "24sp"
+                Button:
+                    text: "-"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("hour", -1)
+
+            # MINUTE
+            BoxLayout:
+                orientation: "vertical"
+                Button:
+                    text: "+"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("minute", 1)
+                Label:
+                    text: root.display_minute
+                    color: 0,0,0,1
+                    bold: True
+                    font_size: "24sp"
+                Button:
+                    text: "-"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("minute", -1)
+            
+            # AM/PM
+            BoxLayout:
+                orientation: "vertical"
+                Button:
+                    text: "+"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("ampm", 0)
+                Label:
+                    text: root.display_ampm
+                    color: 0.2, 0.6, 1, 1
+                    bold: True
+                    font_size: "24sp"
+                Button:
+                    text: "-"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("ampm", 0)
+
+        # --- DATE SECTION ---
+        Label:
+            text: "DATE (Month - Day - Year)"
+            font_size: "12sp"
+            color: 0.5, 0.5, 0.5, 1
+            size_hint_y: None
+            height: "30dp"
+            padding_y: "10dp"
+
+        GridLayout:
+            cols: 3
+            spacing: "10dp"
+            size_hint_y: None
+            height: "100dp"
+
+            # MONTH
+            BoxLayout:
+                orientation: "vertical"
+                Button:
+                    text: "+"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("month", 1)
+                Label:
+                    text: root.display_month
+                    color: 0,0,0,1
+                    bold: True
+                    font_size: "24sp"
+                Button:
+                    text: "-"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("month", -1)
+
+            # DAY
+            BoxLayout:
+                orientation: "vertical"
+                Button:
+                    text: "+"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("day", 1)
+                Label:
+                    text: root.display_day
+                    color: 0,0,0,1
+                    bold: True
+                    font_size: "24sp"
+                Button:
+                    text: "-"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("day", -1)
+
+            # YEAR
+            BoxLayout:
+                orientation: "vertical"
+                Button:
+                    text: "+"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("year", 1)
+                Label:
+                    text: root.display_year
+                    color: 0,0,0,1
+                    bold: True
+                    font_size: "24sp"
+                Button:
+                    text: "-"
+                    font_size: "24sp"
+                    bold: True
+                    background_normal: ''
+                    background_color: 0.8, 0.8, 0.8, 1
+                    color: 0.2, 0.2, 0.2, 1
+                    on_release: root.adjust_time("year", -1)
+
+        # BUTTONS
+        BoxLayout:
+            size_hint_y: None
+            height: "60dp"
+            spacing: "20dp"
+            padding: [0, "20dp", 0, 0]
+
+            Button:
+                text: "CANCEL"
+                background_normal: ''
+                background_color: 0.6, 0.6, 0.6, 1
+                on_release: root.cancel()
+            
+            Button:
+                id: btn_save_time  # <--- Added ID
+                text: "SAVE & UPDATE"
+                background_normal: ''
+                background_color: 0.0, 0.7, 0.4, 1
+                disabled_color: 0.6, 0.6, 0.6, 1  # Visual style when disabled
+                bold: True
+                on_release: root.save_datetime()
+
+
+
+        # Spacer
+        Widget:
+
+
+# --- CLEAN FULL-HEIGHT MEDICAL ALARM POPUP ---
+<AddAlarmPopup>:
+    orientation: "vertical"
+    padding: "40dp"
+    spacing: "30dp"
+    canvas.before:
+        Color:
+            rgba: 0.96, 0.98, 1, 1  # Clinical Light Blue
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [15,]
+
+    Label:
+        text: "SET CLINICAL SCHEDULE"
+        size_hint_y: None
+        height: "40dp"
+        font_size: "18sp"
+        bold: True
+        color: 0.1, 0.3, 0.5, 1
+
+    # --- CENTERED TIME SELECTORS ---
+    BoxLayout:
+        orientation: "vertical"
+        spacing: "25dp"
+        padding: "20dp"
+        canvas.before:
+            Color:
+                rgba: 1, 1, 1, 1
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [15,]
+
+        # HOUR SELECTION
+        BoxLayout:
+            orientation: "horizontal"
+            spacing: "20dp"
+            Label:
+                text: "HOUR"
+                size_hint_x: 0.25
+                bold: True
+                color: 0.4, 0.5, 0.6, 1
+            Button:
+                text: "−"
+                size_hint_x: None
+                width: "80dp"
+                font_size: "36sp"
+                color: 0.2, 0.6, 1, 1
+                background_color: 0,0,0,0
+                on_release: root.adjust_time("hour", -1)
+            Label:
+                id: lbl_hour
+                text: "12"
+                font_size: "40sp"
+                bold: True
+                color: 0.1, 0.1, 0.2, 1
+            Button:
+                text: "+"
+                size_hint_x: None
+                width: "80dp"
+                font_size: "36sp"
+                color: 0.2, 0.6, 1, 1
+                background_color: 0,0,0,0
+                on_release: root.adjust_time("hour", 1)
+
+        # MINUTE SELECTION
+        BoxLayout:
+            orientation: "horizontal"
+            spacing: "20dp"
+            Label:
+                text: "MINUTE"
+                size_hint_x: 0.25
+                bold: True
+                color: 0.4, 0.5, 0.6, 1
+            Button:
+                text: "−"
+                size_hint_x: None
+                width: "80dp"
+                font_size: "36sp"
+                color: 0.2, 0.6, 1, 1
+                background_color: 0,0,0,0
+                on_release: root.adjust_time("minute", -1)
+            Label:
+                id: lbl_minute
+                text: "00"
+                font_size: "40sp"
+                bold: True
+                color: 0.1, 0.1, 0.2, 1
+            Button:
+                text: "+"
+                size_hint_x: None
+                width: "80dp"
+                font_size: "36sp"
+                color: 0.2, 0.6, 1, 1
+                background_color: 0,0,0,0
+                on_release: root.adjust_time("minute", 1)
+
+        # PERIOD SELECTION ROW
+        BoxLayout:
+            orientation: "horizontal"
+            spacing: "20dp"
+            Label:
+                text: "PERIOD"
+                size_hint_x: 0.25
+                bold: True
+                color: 0.4, 0.5, 0.6, 1
+            
+            # Minus Button for AM/PM
+            Button:
+                text: "−"
+                size_hint_x: None
+                width: "80dp"
+                font_size: "30sp"
+                color: 0.2, 0.6, 1, 1
+                background_color: 0,0,0,0
+                on_release: root.adjust_time("ampm", 0) # Calls debounced logic
+            
+            Label:
+                id: lbl_ampm
+                text: "AM"
+                font_size: "30sp"
+                bold: True
+                color: 0.2, 0.6, 1, 1
+            
+            # Plus Button for AM/PM
+            Button:
+                text: "+"
+                size_hint_x: None
+                width: "80dp"
+                font_size: "30sp"
+                color: 0.2, 0.6, 1, 1
+                background_color: 0,0,0,0
+                on_release: root.adjust_time("ampm", 0) # Calls debounced logic
+
+
+
+    # --- FOOTER ACTIONS ---
+    BoxLayout:
+        size_hint_y: None
+        height: "70dp"
+        spacing: "20dp"
+        Button:
+            id: btn_cancel
+            text: "ABORT"
+            background_normal: ''
+            background_color: 0.85, 0.85, 0.85, 1
+            color: 0.3, 0.3, 0.3, 1
+            bold: True
+        Button:
+            id: btn_save
+            text: "CONFIRM"
+            background_normal: ''
+            background_color: 0.1, 0.4, 0.8, 1
+            color: 1, 1, 1, 1
+            bold: True
+            # --- IMPORTANT: DO NOT PUT ANY 'on_release' LINE HERE ---
+            # Python handles the click via .bind()
+
+
+
+
+
+
+# --- ALARM SCREEN ---
+<AlarmScreen>:
+    name: "alarm"
+    canvas.before:
+        Color:
+            rgba: 0.94, 0.96, 0.99, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: "vertical"
+        padding: "15dp"
+        spacing: "10dp"
+
+        # HEADER
+        BoxLayout:
+            size_hint_y: None
+            height: "50dp"
+            padding: "8dp"
+            spacing: "10dp"
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [10,]
+                Color:
+                    rgba: 0.8, 0.8, 0.8, 0.3
+                Line:
+                    width: 1
+                    rounded_rectangle: (self.x, self.y, self.width, self.height, 10)
+
+            Button:
+                text: "BACK"
+                size_hint_x: None
+                width: "70dp"
+                background_normal: ''
+                background_color: 0.5, 0.5, 0.5, 1
+                font_size: "12sp"
+                bold: True
+                on_release: root.go_back_settings()
+                canvas.before:
+                    Color:
+                        rgba: 0, 0, 0, 0.1
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [6,]
+
+            Label:
+                text: "ALARM CONFIGURATION"
+                font_size: "16sp"
+                bold: True
+                color: 0.2, 0.2, 0.4, 1
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+
+        # ALARM LIST AREA
+        ScrollView:
+            canvas.before:
+                Color:
+                    rgba: 1, 1, 1, 1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [10,]
+            
+            GridLayout:
+                id: alarm_grid
+                cols: 1
+                size_hint_y: None
+                height: self.minimum_height
+                padding: "15dp"
+                spacing: "10dp"
+
+        # ADD BUTTON FOOTER
+        Button:
+            text: "+ ADD NEW ALARM"
+            size_hint_y: None
+            height: "50dp"
+            background_normal: ''
+            background_color: 0.2, 0.6, 0.8, 1
+            font_size: "14sp"
+            bold: True
+            on_release: root.show_add_alarm_popup()
+            canvas.before:
+                Color:
+                    rgba: 0, 0, 0, 0.1
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [8,]
+
+
+
+
