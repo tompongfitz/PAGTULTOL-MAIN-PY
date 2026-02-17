@@ -151,7 +151,7 @@ class MenuScreen(Screen):
                 # Linux / nmcli with timeout
                 try:
                     # Check for any active connection on wifi device using nmcli
-                    output = subprocess.check_output(["nmcli", "-t", "-f", "DEVICE,STATE", "dev"], timeout=3).decode('utf-8', errors='ignore')
+                    output = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "DEVICE,STATE", "dev"], timeout=3).decode('utf-8', errors='ignore')
                     for line in output.splitlines():
                         if "wlan" in line or "wifi" in line:
                              if ":connected" in line:
@@ -296,7 +296,7 @@ class WifiScreen(Screen):
         if platform.system() != "Windows":
             state = "on" if turn_on else "off"
             try:
-                subprocess.run(["nmcli", "radio", "wifi", state])
+                subprocess.run(["sudo", "/usr/bin/nmcli", "radio", "wifi", state])
             except Exception:
                 pass
 
@@ -324,6 +324,64 @@ class WifiScreen(Screen):
        
         try:
             if system == "Windows":
+                # Windows logic with timeout
+                try:
+                    cmd = subprocess.check_output("netsh wlan show networks mode=bssid", shell=True, timeout=5)
+                    decoded = cmd.decode('utf-8', errors='ignore')
+                    for line in decoded.split('\n'):
+                        if "SSID" in line and ":" in line:
+                            parts = line.split(":", 1)
+                            ssid = parts[1].strip()
+                            if ssid and ssid not in found_ssids:
+                                networks_data.append({'ssid': ssid, 'active': False})
+                                found_ssids.add(ssid)
+                except subprocess.TimeoutExpired:
+                    print("Windows scan timed out")
+
+            else:
+                # Linux/Pi: Get ACTIVE status + SSID
+                # 1. Try to rescan first (refresh list)
+                try:
+                    subprocess.run(["sudo", "/usr/bin/nmcli", "device", "wifi", "rescan"], timeout=5)
+                except Exception:
+                    pass
+               
+                # 2. Get list with timeout
+                try:
+                    cmd = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi", "list"], timeout=10)
+                    decoded = cmd.decode('utf-8', errors='ignore')
+                    for line in decoded.split('\n'):
+                        if ":" in line:
+                            active_str, ssid = line.split(":", 1)
+                            ssid = ssid.strip()
+                            is_active = (active_str.lower() == 'yes')
+                           
+                            if ssid and ssid not in found_ssids and "--" not in ssid:
+                                networks_data.append({'ssid': ssid, 'active': is_active})
+                                found_ssids.add(ssid)
+                except subprocess.TimeoutExpired:
+                    print("Linux scan timed out")
+                           
+        except Exception as e:
+            print(f"Scan Error: {e}")
+            Clock.schedule_once(lambda dt: self._update_status(f"Scan Error"), 0)
+            self.scanning = False
+            return
+
+        # Sort: Active first, then Alphabetical
+        networks_data.sort(key=lambda x: (not x['active'], x['ssid']))
+       
+        self.cached_networks = networks_data
+        Clock.schedule_once(lambda dt: self._render_network_list(), 0)
+
+
+
+        networks_data = [] # List of {'ssid': name, 'active': bool}
+        found_ssids = set()
+        system = platform.system()
+       
+        try:
+            if system == "Windows":
                 cmd = subprocess.check_output("netsh wlan show networks mode=bssid", shell=True)
                 decoded = cmd.decode('utf-8', errors='ignore')
                 for line in decoded.split('\n'):
@@ -337,10 +395,10 @@ class WifiScreen(Screen):
             else:
                 # Linux/Pi: Get ACTIVE status + SSID
                 # Try to rescan first
-                try: subprocess.run(["nmcli", "device", "wifi", "rescan"], timeout=5)
+                try: subprocess.run(["sudo", "/usr/bin/nmcli", "device", "wifi", "rescan"], timeout=5)
                 except: pass
                
-                cmd = subprocess.check_output(["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi", "list"])
+                cmd = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi", "list"])
                 decoded = cmd.decode('utf-8', errors='ignore')
                 for line in decoded.split('\n'):
                     if ":" in line:
@@ -420,7 +478,9 @@ class WifiScreen(Screen):
                     font_size=14,
                     size_hint_y=0.6
                 )
-                btn_top.bind(on_release=lambda x: self.toggle_expand(ssid))
+                btn_top.bind(on_release=lambda x, s=ssid: self.toggle_expand(s))
+
+
                
                 # Bottom: Disconnect Button
                 # We put this in a padding box to make it look nicer and centered
@@ -490,9 +550,21 @@ class WifiScreen(Screen):
 
     def _perform_disconnect(self, ssid):
         if platform.system() != "Windows":
+            # Linux: nmcli connection down id <ssid>
+            try:
+                subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "down", "id", ssid], capture_output=True, timeout=10)
+            except Exception as e:
+                print(f"Disconnect Error: {e}")
+       
+        # After disconnect, rescan to update UI
+        Clock.schedule_once(lambda dt: self.scan_wifi(), 1.0)
+
+
+
+        if platform.system() != "Windows":
             # Linux: nmcli connection down <id>
             try:
-                subprocess.run(["nmcli", "connection", "down", ssid], capture_output=True)
+                subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "down", ssid], capture_output=True)
             except Exception:
                 pass
        
@@ -510,7 +582,7 @@ class WifiScreen(Screen):
             return False # Windows management is complex, skipping logic
         try:
             # nmcli -g NAME connection show lists all connection names
-            output = subprocess.check_output(["nmcli", "-g", "NAME", "connection", "show"], timeout=2).decode('utf-8')
+            output = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-g", "NAME", "connection", "show"], timeout=2).decode('utf-8')
             profiles = output.strip().split('\n')
             return ssid in profiles
         except:
@@ -546,9 +618,26 @@ class WifiScreen(Screen):
     def _perform_saved_connection(self, ssid):
         success = False
         try:
+            # Try to bring up connection using existing profile with "id" flag
+            res = subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "up", "id", ssid], capture_output=True, timeout=15)
+            if res.returncode == 0:
+                success = True
+        except Exception as e:
+            print(f"Saved connection error: {e}")
+       
+        if success:
+            Clock.schedule_once(lambda dt: self.scan_wifi(), 2.0)
+        else:
+            # Fallback to password screen if saved connection fails
+            Clock.schedule_once(lambda dt: self._prompt_password_fallback(ssid), 0)
+
+
+
+        success = False
+        try:
             # Try to bring up connection using existing profile
             # nmcli connection up <ssid>
-            res = subprocess.run(["nmcli", "connection", "up", ssid], capture_output=True)
+            res = subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "up", ssid], capture_output=True)
             if res.returncode == 0:
                 success = True
         except:
@@ -584,6 +673,39 @@ class WifiScreen(Screen):
         success = False
         try:
             if system == "Windows":
+                Clock.schedule_once(lambda dt: self._update_status("Windows: Connect manually."), 0)
+                return
+            else:
+                # 1. Clear any old saved profile for this SSID so the new password works
+                try:
+                    subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "delete", "id", ssid], capture_output=True, timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+
+                # 2. Connect with a timeout to prevent thread freezing
+                cmd = ["sudo", "/usr/bin/nmcli", "device", "wifi", "connect", ssid, "password", password]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+               
+                # Debugging logs
+                print(f"NMCLI Return Code: {result.returncode}")
+                print(f"NMCLI Output: {result.stdout}")
+                print(f"NMCLI Error: {result.stderr}")
+
+                if result.returncode == 0:
+                    success = True
+        except Exception as e:
+            print(f"Connection Error: {e}")
+            pass
+        
+        # Rescan to show connected status
+        Clock.schedule_once(lambda dt: self.scan_wifi(), 2.0)
+
+
+
+        system = platform.system()
+        success = False
+        try:
+            if system == "Windows":
                 # Placeholder for Windows logic
                 Clock.schedule_once(lambda dt: self._update_status("Windows: Connect manually."), 0)
                 return
@@ -594,7 +716,7 @@ class WifiScreen(Screen):
 
 
                 # 2. Connect
-                cmd = ["nmcli", "device", "wifi", "connect", ssid, "password", password]
+                cmd = ["sudo", "/usr/bin/nmcli", "device", "wifi", "connect", ssid, "password", password]
                 result = subprocess.run(cmd, capture_output=True, text=True)
                
                 # Debugging logs (Check console if connection fails)
@@ -1244,7 +1366,7 @@ class ChatScreen(Screen):
             else:
                 # Linux check
                 try:
-                    output = subprocess.check_output(["nmcli", "-t", "-f", "DEVICE,STATE", "dev"], timeout=2).decode('utf-8', errors='ignore')
+                    output = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "DEVICE,STATE", "dev"], timeout=2).decode('utf-8', errors='ignore')
                     for line in output.splitlines():
                         if "wlan" in line or "wifi" in line:
                              if ":connected" in line:
