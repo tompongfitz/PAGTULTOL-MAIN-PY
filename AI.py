@@ -18,9 +18,22 @@ import sys
 import serial
 import subprocess
 import platform
+
+
+# Add this near your other imports
+# try:
+    # from gpiozero import Buzzer
+    # # Initialize the buzzer on GPIO 17 (Change the pin number if you connected it differently)
+    # buzzer = Buzzer(17) 
+# except ImportError:
+    # print("gpiozero not installed or not running on a Raspberry Pi.")
+    # buzzer = None
+
+
+from time import sleep
+import RPi.GPIO as GPIO
 from datetime import datetime
 from functools import partial
-
 from kivy.uix.vkeyboard import VKeyboard
 from kivy.app import App
 from kivy.lang import Builder
@@ -43,6 +56,9 @@ ALARM_FILE = "alarms.json"
 LOG_FILE = "patient_logs.txt"   # Name of the file where vital signs are saved
 CHAT_FILE = "chat_history.json" # Name of the file where chat history is saved
 TARGET_PHONE_NUMBER = "+639171234567" # REPLACE THIS WITH THE DOCTOR/GUARDIAN NUMBER
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(17, GPIO.OUT)
+buzzer = 1
 
 
 def resource_path(relative_path):
@@ -2074,111 +2090,67 @@ class PagtultolApp(App):
         except Exception as e:
             print(f"Error in alarm service: {e}")
 
-    def trigger_medical_alert(self, alarm_time):
-        """
-        Creates a clean medical popup tuned for 800x480 screens.
-        """
-        
-        # Local imports
-        # from kivy.graphics import Color, RoundedRectangle
+    def buzzer(self):
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(17, GPIO.OUT)
+        GPIO.output(17, 1)
+        sleep(1)
+        GPIO.output(17, 0)
+        sleep(1)
 
-        # --- 1. SETUP THE WHITE CARD BACKGROUND ---
-        def update_bg(instance, value):
-            instance.canvas.before.clear()
-            with instance.canvas.before:
-                Color(1, 1, 1, 1)  # Pure White Background
-                # Rounded corners (Radius 15 is smoother on smaller screens)
-                RoundedRectangle(pos=instance.pos, size=instance.size, radius=[15])
-                
-            
-
-        # COMPACT PADDING: Reduced from 30dp to 15dp to save space
-        content = BoxLayout(orientation='vertical', padding='15dp', spacing='5dp')
-        content.bind(pos=update_bg, size=update_bg)
-
-        # --- 2. HEADER (Medical Icon) ---
-        # FIXED: Changed from special '✚' to standard '+' so it doesn't show a box
-        header_icon = Label(
-            text="[b][color=ff3b30]+[/color][/b]", # Standard Plus symbol
-            markup=True,
-            font_size='60sp', # Made it slightly larger to look like an icon
-            size_hint_y=None,
-            height='50dp'
-        )
-        
+    def trigger_medical_alert(self, message="It is time for your scheduled medication."):
+        # 1. Instantiate the UI from the KV file
+        content = Factory.MedicalAlertContent()
+       
+        # 2. Update dynamic text
+        content.ids.alert_message.text = message
 
 
-
-
-        # --- 3. STATUS TEXT ---
-        # Height: 25dp | Font: 14sp
-        status_lbl = Label(
-            text="URGENT MEDICAL ALERT",
-            font_size='14sp',
-            bold=True,
-            color=(0.5, 0.5, 0.5, 1),
-            size_hint_y=None,
-            height='25dp'
-        )
-
-        # --- 4. TIME DISPLAY ---
-        # Height: 80dp | Font: 55sp (Big enough to read, small enough to fit)
-        time_lbl = Label(
-            text=alarm_time,
-            font_size='55sp', 
-            bold=True,
-            color=(0.1, 0.1, 0.1, 1),
-            size_hint_y=None,
-            height='80dp'
-        )
-
-        # --- 5. INSTRUCTION ---
-        # Takes remaining space | Font: 16sp
-        msg_lbl = Label(
-            text="Scheduled protocol requires attention.\nPlease verify patient status.",
-            halign='center',
-            valign='middle',
-            font_size='16sp',
-            color=(0.3, 0.3, 0.3, 1)
-        )
-        msg_lbl.bind(size=lambda s, w: setattr(msg_lbl, 'text_size', (w[0], None)))
-
-        # --- 6. ACTION BUTTON ---
-        # Height: 60dp | Font: 18sp
-        # 60dp is a good touch target size on 480px screens
-        ack_btn = Button(
-            text="ACKNOWLEDGE",
-            size_hint_y=None,
-            height='60dp', 
-            background_normal='', 
-            background_color=(0.0, 0.48, 1.0, 1), # Clinical Blue
-            color=(1, 1, 1, 1),
-            bold=True,
-            font_size='18sp'
-        )
-
-        # Add widgets
-        content.add_widget(header_icon)
-        content.add_widget(status_lbl)
-        content.add_widget(time_lbl)
-        content.add_widget(msg_lbl)
-        content.add_widget(ack_btn)
-
-        # --- 7. CREATE POPUP ---
-        # Size Hint: 0.85 Width, 0.9 Height (Maximizes vertical space on 480px)
-        popup = Popup(
-            title="",
-            separator_height=0,
+        # 3. Create the Popup wrapper
+        self._alert_popup = Popup(
+            title="MEDICATION REMINDER",
             content=content,
-            size_hint=(0.85, 0.9), 
-            auto_dismiss=False,
-            background_color=(0,0,0,0.7)
+            size_hint=(0.75, 0.5),
+            auto_dismiss=False, # Force user to click the button
+            title_size="16sp",
+            title_color=(0.9, 0.1, 0.1, 1),
+            separator_color=(0.9, 0.1, 0.1, 1),
+            background_color=(0.15, 0.15, 0.15, 1) # Dark theme matching
         )
 
-        ack_btn.bind(on_release=popup.dismiss)
-        popup.open()
+
+        # 4. Bind the proceed button to dismiss the popup, stop buzzer, and change screen
+        def on_proceed_click(*args):
+            # 1. Dismiss the popup FIRST
+            self._alert_popup.dismiss()
+           
+            # 2. Stop the buzzer safely
+            GPIO.cleanup()
+               
+            # 3. Redirect to the vitals screen AFTER dismissing
+            from kivy.app import App
+            app = App.get_running_app()
+            if app and app.root:
+                app.root.current = 'vitals'
+               
+        content.ids.btn_vitals.bind(on_release=on_proceed_click)
+
+
+        # 5. Open the Popup and trigger the buzzer (1 sec ON, 1 sec OFF)
+        self._alert_popup.open()
         
+        # try:
+            # if 'buzzer' in globals() and buzzer is not None:
+                # GPIO.output(17, 1)
+                # sleep(1)
+                # GPIO.output(17, 0)
+                # sleep(1)
+        # except Exception as e:
+            # print(f"Buzzer start error: {e}")
         
+        self.buzzer()
+        
+
 
     def save_chat_message(self, role, text):
         """Saves messages to the history file."""
