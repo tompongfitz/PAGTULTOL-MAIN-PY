@@ -109,7 +109,76 @@
         font_size: "10sp"
 
 
+# --- REDESIGNED MEDICAL ALERT POPUP CONTENT ---
+# Copy and replace your existing <MedicalAlertContent@BoxLayout> in new design.kv with this:
 
+<MedicalAlertContent@BoxLayout>:
+    orientation: "vertical"
+    padding: "24dp"
+    spacing: "20dp"
+
+    # Main Card Background (Dark Theme for high contrast alert with Red Border)
+    canvas.before:
+        Color:
+            rgba: 0.9, 0.1, 0.1, 1  # Bright Red Border
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [16, 16, 16, 16]
+        Color:
+            rgba: 1, 1, 1, 1  # Dark Inner Background
+        RoundedRectangle:
+            pos: [self.pos[0] + dp(3), self.pos[1] + dp(3)]
+            size: [self.size[0] - dp(6), self.size[1] - dp(6)]
+            radius: [14, 14, 14, 14]
+
+    # Top Banner / Icon Area
+    BoxLayout:
+        size_hint_y: 0.3
+        orientation: "vertical"
+        Label:
+            text: "PLEASE TAKE YOUR MEDICINE."
+            font_size: "20sp"
+            bold: True
+            color: 0.9, 0.2, 0.2, 1  # Danger Red Text
+            size_hint_y: 0.4
+            halign: "center"
+            valign: "top"
+
+    # Alert Message Body
+    Label:
+        id: alert_message
+        text: "It is time for your scheduled medication."
+        color: 0.9, 0.9, 0.9, 1  # Off-white text for dark mode
+        font_size: "16sp"
+        halign: "center"
+        valign: "middle"
+        # Wrap text nicely within the label width
+        text_size: self.width - dp(20), None
+        size_hint_y: 0.45
+
+    # Action Buttons Area
+    BoxLayout:
+        size_hint_y: 0.25
+        spacing: "20dp"
+
+        # Proceed to Vitals Button (Primary Action - Highlighted Pill Shape)
+        Button:
+            id: btn_vitals
+            text: "PROCEED TO VITALS SCANNER"
+            background_normal: ''
+            background_color: 0, 0, 0, 0  # Transparent to let canvas show
+            color: 1, 1, 1, 1
+            bold: True
+            # Automatically redirects to the vitals screen (Make sure 'vitals' matches your actual screen name in your ScreenManager)
+            on_release: app.root.current = 'vitals'
+            canvas.before:
+                Color:
+                    rgba: 0.85, 0.15, 0.15, 1  # Solid Red
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [self.height / 2]  # Perfectly rounded pill shape
 
 
 
