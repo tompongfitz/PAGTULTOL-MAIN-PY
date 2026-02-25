@@ -1,14 +1,6 @@
 # 1. SETUP CONFIG FIRST (Must be at the very top)
 import os
 from kivy.config import Config
-# This ensures the window opens in fullscreen immediately
-Config.set('graphics', 'show cursor', '1')
-Config.set('graphics', 'fullscreen', 'auto')
-Config.set('graphics', 'window_state', 'maximized')
-# Prevent mouse emulation issues (sometimes causes double events)
-Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
-
-
 import json
 import threading
 import requests
@@ -18,18 +10,7 @@ import sys
 import serial
 import subprocess
 import platform
-
-
-# Add this near your other imports
-# try:
-    # from gpiozero import Buzzer
-    # # Initialize the buzzer on GPIO 17 (Change the pin number if you connected it differently)
-    # buzzer = Buzzer(17) 
-# except ImportError:
-    # print("gpiozero not installed or not running on a Raspberry Pi.")
-    # buzzer = None
-
-
+import paho.mqtt.client as mqtt
 from time import sleep
 import RPi.GPIO as GPIO
 from datetime import datetime
@@ -49,6 +30,8 @@ from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
 from kivy.core.window import Window
 from kivy.properties import StringProperty, BooleanProperty
 from kivy.graphics import Color, RoundedRectangle
+from kivy.network.urlrequest import UrlRequest 
+from kivy.properties import NumericProperty, BooleanProperty
 
 
 # --- CONFIGURATION ---
@@ -56,9 +39,24 @@ ALARM_FILE = "alarms.json"
 LOG_FILE = "patient_logs.txt"   # Name of the file where vital signs are saved
 CHAT_FILE = "chat_history.json" # Name of the file where chat history is saved
 TARGET_PHONE_NUMBER = "+639171234567" # REPLACE THIS WITH THE DOCTOR/GUARDIAN NUMBER
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(17, GPIO.OUT)
-buzzer = 1
+
+# This ensures the window opens in fullscreen immediately
+Config.set('graphics', 'fullscreen', 'auto')
+Config.set('graphics', 'window_state', 'maximized')
+
+    
+def send_vitals_to_dashboard(sys, dia, hr):
+    # Package the vitals into a JSON dictionary
+    data = {
+        "systolic": sys,
+        "diastolic": dia,
+        "heart_rate": hr
+    }
+    
+    # Convert dictionary to JSON string and publish to the topic
+    payload = json.dumps(data)
+    mqtt_client.publish("vitals/data", payload)
+    print(f"Published to Node-RED: {payload}")
 
 
 def resource_path(relative_path):
@@ -70,6 +68,15 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+def clean_response(text):
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    text = re.sub(r'`(.*?)`', r'\1', text)
+    text = re.sub(r'#+ ', '', text)
+    return text.strip()
+
+
 # Load KV file
 Builder.load_file(resource_path("new design.kv"))
 
@@ -78,15 +85,11 @@ Builder.load_file(resource_path("new design.kv"))
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "deepseek-v3.1:671b-cloud"
 
+# Setup the MQTT Client
+mqtt_client = mqtt.Client()
 
-def clean_response(text):
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.*?)\*', r'\1', text)
-    text = re.sub(r'`(.*?)`', r'\1', text)
-    text = re.sub(r'#+ ', '', text)
-    return text.strip()
-   
+# Connect to the Mosquitto broker running on the same device
+mqtt_client.connect("localhost", 1883, 60)
    
    
 class BlackScreen(Screen):
@@ -108,6 +111,7 @@ class MenuScreen(Screen):
     _last_click = 0
     clock_event = None
     wifi_check_event = None
+
 
     def go_to_settings(self):
         if time.time() - self._last_click < 0.05: return
@@ -148,6 +152,7 @@ class MenuScreen(Screen):
             print("ERROR: Clock IDs not found in MenuScreen. Check .kv file.")
         except AttributeError:
              print("ERROR: Attribute Error on Clock Update.")
+   
    
     def check_wifi_status(self, dt):
         threading.Thread(target=self._perform_wifi_check, daemon=True).start()
@@ -207,6 +212,7 @@ class MenuScreen(Screen):
         if time.time() - self._last_click < 0.05: return
         self._last_click = time.time()
         self.manager.current = "vitals"
+       
        
     def go_to_wifi(self):
         if time.time() - self._last_click < 0.05: return
@@ -268,16 +274,15 @@ class WifiScreen(Screen):
     _last_key_down = None # Track last key name
     _last_key_time = 0.0
     selected_ssid = ""
-   
     # Network State
     cached_networks = []  # List of dicts: {'ssid': str, 'active': bool}
     expanded_ssid = None  # Tracks which SSID is currently "expanded" in the UI
+
 
     def __init__(self, **kwargs):
         super(WifiScreen, self).__init__(**kwargs)
         self.selected_ssid = ""
 
-	
 	
     def on_enter(self):
         # Ensure we start on the list view
@@ -860,11 +865,9 @@ class WifiScreen(Screen):
 
 
 class VitalSignsScreen(Screen):
-    # Initialize variables
     bp_sys = 0
     bp_dia = 0
     bp_bpm = 0
-   
     current_temp_value = 0
     current_dia_value = 0
     current_bpm_value = 0
@@ -1146,6 +1149,8 @@ class VitalSignsScreen(Screen):
         self.ids.btn_scan.text = "SAVED"
        
         Clock.schedule_once(partial(self.redirect_to_ai, temp_val, dia_val, bpm_val), 1.0)
+        
+        send_vitals_to_dashboard(temp_val, dia_val, bpm_val)
 
 
     def redirect_to_ai(self, temp_val, dia_val, bpm_val, dt):
@@ -1159,6 +1164,7 @@ class VitalSignsScreen(Screen):
 class HistoryRow(BoxLayout):
     text_content = StringProperty("")
    
+   
     def __init__(self, text_content="", **kwargs):
         super().__init__(**kwargs)
         self.text_content = text_content
@@ -1167,8 +1173,6 @@ class HistoryRow(BoxLayout):
 
 class HistoryScreen(Screen):
     _last_click = 0 # New attribute for debounce logic
-
-
 
 
     def on_enter(self):
@@ -1198,8 +1202,6 @@ class HistoryScreen(Screen):
         for record in app.saved_history:
             row = HistoryRow(text_content=record)
             self.ids.history_grid.add_widget(row)
-
-
 
 
     def delete_record(self, row_widget):
@@ -1236,8 +1238,6 @@ class HistoryScreen(Screen):
             if "btn_clear_db" in self.ids: self.ids.btn_clear_db.disabled = True
 
 
-
-
     def clear_history(self):
         # Debounce to prevent accidental double clicks (1 second wait)
         if time.time() - self._last_click < 1.0: return
@@ -1268,8 +1268,6 @@ class HistoryScreen(Screen):
         content.ids.cancel_button.bind(on_release=self.popup.dismiss)
         content.ids.confirm_button.bind(on_release=self.execute_clear_history)
         self.popup.open()
-
-
 
 
     def execute_clear_history(self, instance):
@@ -1325,8 +1323,6 @@ class ChatScreen(Screen):
     current_ai_text_accumulator = ""
 
 
-
-
     def on_enter(self):
         # 1. Clear previous chat widgets to prevent duplicates if returning
         self.ids.messages_layout.clear_widgets()
@@ -1347,8 +1343,6 @@ class ChatScreen(Screen):
         self.check_online_status()
 
 
-
-
     def on_leave(self):
         # Stop background events when leaving screen
         if self.thinking_event:
@@ -1359,14 +1353,10 @@ class ChatScreen(Screen):
             self.type_event = None
 
 
-
-
     def check_online_status(self):
         if "ai_status_label" in self.ids:
             self.ids.ai_status_label.text = "Checking connection..."
         threading.Thread(target=self._check_wifi_thread, daemon=True).start()
-
-
 
 
     def _check_wifi_thread(self):
@@ -1393,8 +1383,6 @@ class ChatScreen(Screen):
         Clock.schedule_once(partial(self._update_status_label, is_connected), 0)
 
 
-
-
     def _update_status_label(self, is_connected, dt):
         lbl = self.ids.get("ai_status_label")
         if lbl:
@@ -1404,8 +1392,6 @@ class ChatScreen(Screen):
             else:
                 lbl.text = "OFFLINE • Wi-Fi Disconnected"
                 lbl.color = (0.8, 0.3, 0.3, 1)
-
-
 
 
     def force_input_style(self, dt):
@@ -1420,13 +1406,9 @@ class ChatScreen(Screen):
             ti.background_color = (0, 0, 0, 0)
 
 
-
-
     def add_medical_greeting(self):
         greeting = "Hello. I am Kairos.\nHow can I help you check your vitals today?"
         self.add_assistant_bubble_static(greeting)
-
-
 
 
     def clear_chat_history(self):
@@ -1434,10 +1416,9 @@ class ChatScreen(Screen):
         App.get_running_app().clear_chat_data()
         self.add_medical_greeting()
    
+   
     def go_back_menu(self):
         self.manager.current = "menu"
-
-
 
 
     def _create_label_for_bubble(self, bubble, text, color=(0, 0, 0, 1)):
@@ -1452,8 +1433,6 @@ class ChatScreen(Screen):
         return lbl
 
 
-
-
     def load_saved_messages(self):
         app = App.get_running_app()
         for msg in app.chat_history:
@@ -1461,8 +1440,6 @@ class ChatScreen(Screen):
                 self.add_user_message(msg['text'], save=False)
             else:
                 self.add_assistant_bubble_static(msg['text'])
-
-
 
 
     def add_assistant_bubble_static(self, text):
@@ -1476,8 +1453,6 @@ class ChatScreen(Screen):
         bubble.add_widget(lbl)
         self.ids.messages_layout.add_widget(bubble)
         Clock.schedule_once(lambda dt: self.scroll_to_bottom(), 0.02)
-
-
 
 
     def add_user_message(self, text, save=True):
@@ -1497,8 +1472,6 @@ class ChatScreen(Screen):
             App.get_running_app().save_chat_message("user", text)
 
 
-
-
     def add_assistant_placeholder(self):
         from kivy.factory import Factory
         try: bubble = Factory.ChatBubble()
@@ -1513,8 +1486,6 @@ class ChatScreen(Screen):
         return bubble, lbl
 
 
-
-
     def send_message(self):
         prompt = getattr(self.ids, "input_field", None)
         if not prompt or not prompt.text.strip():
@@ -1523,8 +1494,6 @@ class ChatScreen(Screen):
         text = prompt.text.strip()
         self.trigger_automated_query(text)
         prompt.text = ""
-
-
 
 
     def trigger_automated_query(self, text):
@@ -1543,8 +1512,6 @@ class ChatScreen(Screen):
         threading.Thread(target=self._query_ollama, args=(text,), daemon=True).start()
 
 
-
-
     def _thinking_step(self, dt):
         self.thinking_dots = (self.thinking_dots + 1) % 4
         if hasattr(self, "assistant_label"):
@@ -1552,8 +1519,6 @@ class ChatScreen(Screen):
             self.assistant_label.texture_update()
         Clock.schedule_once(lambda dt: self.scroll_to_bottom(), 0)
         return True
-
-
 
 
     def _query_ollama(self, prompt):
@@ -1590,8 +1555,6 @@ class ChatScreen(Screen):
             Clock.schedule_once(partial(self._process_stream_chunk, err_msg, True), 0)
 
 
-
-
     def _process_stream_chunk(self, token, is_done, dt):
         if self.is_thinking:
             if self.thinking_event:
@@ -1614,15 +1577,11 @@ class ChatScreen(Screen):
             App.get_running_app().save_chat_message("assistant", clean_text)
 
 
-
-
     def scroll_to_bottom(self):
         sv = getattr(self.ids, "messages_scroll", None)
         layout = getattr(self.ids, "messages_layout", None)
         if sv and layout and layout.children:
             sv.scroll_to(layout.children[0])
-
-
 
 
     def build_keyboard(self, dt=None):
@@ -1686,8 +1645,6 @@ class ChatScreen(Screen):
             layout.add_widget(row)
 
 
-
-
     def on_key_press(self, key_name, instance, *args):
         now = time.time()
         debounce_active = False
@@ -1745,12 +1702,11 @@ class SettingsScreen(Screen):
         self._last_click = time.time()
         self.manager.current = "menu"
 
+
     def open_alarm_settings(self):
         if time.time() - self._last_click < 0.2: return
         self._last_click = time.time()
         self.manager.current = "alarm"  # <--- Update this line
-
-
 
 
     def open_datetime_settings(self):
@@ -1899,6 +1855,7 @@ class AlarmScreen(Screen):
         self._last_click = time.time()
         self.manager.current = "settings"
 
+
     def load_alarms(self):
         if os.path.exists(ALARM_FILE):
             try:
@@ -1909,12 +1866,14 @@ class AlarmScreen(Screen):
         else:
             self.alarm_list = []
 
+
     def save_alarms(self):
         try:
             with open(ALARM_FILE, "w") as f:
                 json.dump(self.alarm_list, f, indent=4)
         except Exception as e:
             print(f"Error saving alarms: {e}")
+
 
     def render_alarms(self):
         grid = self.ids.alarm_grid
@@ -1953,6 +1912,7 @@ class AlarmScreen(Screen):
             row.add_widget(del_btn)
             grid.add_widget(row)
 
+
     def delete_alarm(self, index, instance):
         if time.time() - self._last_click < 0.2: return
         self._last_click = time.time()
@@ -1961,6 +1921,7 @@ class AlarmScreen(Screen):
             del self.alarm_list[index]
             self.save_alarms()
             self.render_alarms()
+
 
     def show_add_alarm_popup(self):
         if time.time() - self._last_click < 0.3: return
@@ -1981,6 +1942,7 @@ class AlarmScreen(Screen):
         content.ids.btn_save.bind(on_release=self.execute_one_shot_save)
         
         self._popup.open()
+
 
     def execute_one_shot_save(self, instance):
         """ This function is now a 'One-Shot' killer for duplicates """
@@ -2022,10 +1984,28 @@ class PagtultolApp(App):
     # --- SYSTEM VARIABLES ---
     saved_history = []
     chat_history = []
-    
+    _last_click_time = 0.0
+    _is_warning_open = False
     
     # Track the last alert so we don't spam the user
     last_triggered_time = "" 
+    buzzer_event = None
+    buzzer_state = False
+    _alert_popup = None
+    pill_count = NumericProperty(8) 
+    can_take_medicine = BooleanProperty(False) 
+
+    def check_debounce(self, wait_time=0.5):
+        """
+        Acts as a lock. Returns True if enough time has passed (0.5 seconds),
+        allowing the action to proceed. Returns False if clicked too fast.
+        """
+        current_time = time.time()
+        if current_time - self._last_click_time < wait_time:
+            return False # Block the action
+        self._last_click_time = current_time
+        return True # Allow the action
+
 
     def build(self):
         # 1. Load Patient Logs
@@ -2049,12 +2029,348 @@ class PagtultolApp(App):
         sm = WindowManager(transition=FadeTransition(duration=0.1))
         return sm 
 
+
+    def manual_decrement(self):
+        """Subtracts 1 pill manually from the configuration screen."""
+        if not self.check_debounce(): return 
+        if self.pill_count > 0:
+            self.pill_count -= 1
+            print(f"Manual adjust: Pills remaining: {self.pill_count}")
+
+
+    def manual_increment(self):
+        """Adds exactly 1 pill to the software inventory, up to a max of 8."""
+        if not self.check_debounce(): return 
+        if self.pill_count < 8:
+            self.pill_count += 1
+            print(f"Manual adjust: Pills remaining: {self.pill_count}")
+        else:
+            print("Dispenser is already at maximum capacity (8/8).")
+
+        """Subtracts 1 pill manually from the configuration screen."""
+        if not self.check_debounce(): return # Debounce lock
+        
+        if self.pill_count > 0:
+            self.pill_count -= 1
+            print(f"Manual adjust: Pills remaining: {self.pill_count}")
+
+
+    def refill_pills(self):
+        """Sets the pill count to the maximum of 8."""
+        if not self.check_debounce(): return # Debounce lock
+        
+        self.pill_count = 8
+        print("Pills refilled to 8.")
+
+    @mainthread
+    def unlock_medicine_button(self):
+        """Directly targets the button by ID and forces it to unlock."""
+        self.can_take_medicine = True
+        
+        # 1. Locate the Vitals screen in the ScreenManager
+        if self.root and self.root.has_screen('vitals'):
+            vitals_screen = self.root.get_screen('vitals')
+            
+            # 2. Grab the specific button by its ID and force it ON
+            if 'btn_take_medicine' in vitals_screen.ids:
+                med_btn = vitals_screen.ids.btn_take_medicine
+                med_btn.disabled = False
+                med_btn.background_color = (0.2, 0.7, 0.5, 1) # Turn Medical Green
+                print("SYSTEM OVERRIDE: Button forcefully unlocked via ID.")
+            else:
+                print("ERROR: Could not find 'btn_take_medicine' ID.")
+
+
+    def take_medicine_action(self):
+        """Checks inventory, dispenses, and forces the button to lock again."""
+        if not self.check_debounce(): return 
+        
+        if not self.can_take_medicine:
+            print("Action blocked: No active medication schedule.")
+            return
+
+        if self.pill_count > 0:
+            self.pill_count -= 1
+            
+            # Lock the internal logic
+            self.can_take_medicine = False 
+            
+            # 3. Locate the button again and force it OFF
+            if self.root and self.root.has_screen('vitals'):
+                vitals_screen = self.root.get_screen('vitals')
+                if 'btn_take_medicine' in vitals_screen.ids:
+                    med_btn = vitals_screen.ids.btn_take_medicine
+                    med_btn.disabled = True
+                    med_btn.background_color = (0.3, 0.3, 0.3, 1) # Turn Gray
+            
+            print(f"Medicine dispensed. Pills remaining: {self.pill_count}")
+            self.send_rotate_command() 
+        else:
+            print("Cannot dispense: No pills left!")
+            self.show_empty_dispenser_warning()
+
+
+
+        """Checks inventory and authorization before dispensing."""
+        if not self.check_debounce(): return 
+        
+        if not self.can_take_medicine:
+            print("Action blocked: No active medication schedule.")
+            return
+
+        if self.pill_count > 0:
+            self.pill_count -= 1
+            # Lock the button again after dispensing
+            self.can_take_medicine = False 
+            
+            print(f"Medicine dispensed. Pills remaining: {self.pill_count}")
+            self.send_rotate_command() 
+        else:
+            print("Cannot dispense: No pills left!")
+            self.show_empty_dispenser_warning()
+
+        """Checks inventory and authorization before dispensing."""
+        if not self.check_debounce(): return 
+        
+        # 1. Double-check the authorization lock
+        if not self.can_take_medicine:
+            print("Action blocked: No active medication schedule.")
+            return
+
+        # 2. Proceed with dispensing if pills are available
+        if self.pill_count > 0:
+            self.pill_count -= 1
+            
+            # 3. Lock the button immediately after one use
+            self.can_take_medicine = False 
+            
+            print(f"Medicine dispensed. Pills remaining: {self.pill_count}")
+            self.send_rotate_command() 
+        else:
+            print("Cannot dispense: No pills left!")
+            self.show_empty_dispenser_warning()
+
+
+    def show_empty_dispenser_warning(self):
+        """Medical-themed critical alert for an empty dispenser."""
+        if self._is_warning_open:
+            return
+        self._is_warning_open = True 
+        
+        content = BoxLayout(orientation='vertical', padding="20dp", spacing="15dp")
+        
+        warning_msg = Label(
+            text="CRITICAL: No medication detected.\n\nPlease load the physical chamber and manually add [+1] to the software inventory.",
+            halign="center", 
+            valign="middle",
+            font_size="16sp",
+            color=(1, 0.3, 0.3, 1) # Light red warning text
+        )
+        warning_msg.bind(size=warning_msg.setter('text_size')) 
+        
+        close_btn = Button(
+            text="ACKNOWLEDGE", 
+            size_hint_y=None, 
+            height="55dp",
+            font_size="16sp",
+            bold=True,
+            background_normal='',
+            background_color=(0.8, 0.2, 0.2, 1) # Emergency red button
+        )
+        
+        content.add_widget(warning_msg)
+        content.add_widget(close_btn)
+        
+        empty_popup = Popup(
+            title="[!] ALERT: DISPENSER EMPTY",
+            content=content,
+            size_hint=(0.8, 0.4),
+            auto_dismiss=False, 
+            title_size="18sp",
+            title_color=(1, 1, 1, 1),
+            separator_color=(0.9, 0.1, 0.1, 1), # Red divider line
+            background_color=(0.15, 0.05, 0.05, 1) # Subtle red-tinted background
+        )
+        
+        def on_popup_dismiss(*args):
+            self._is_warning_open = False
+            
+        empty_popup.bind(on_dismiss=on_popup_dismiss)
+        close_btn.bind(on_release=empty_popup.dismiss)
+        empty_popup.open()
+
+        """Generates and opens a warning popup safely."""
+        # 1. Block duplicate pop-ups if one is already on screen
+        if self._is_warning_open:
+            return
+        self._is_warning_open = True 
+        
+        content = BoxLayout(orientation='vertical', padding="20dp", spacing="15dp")
+        
+        warning_msg = Label(
+            text="No pills left in the container!\n\nPlease go to Settings > Pill Management to refill the software inventory.",
+            halign="center", 
+            valign="middle",
+            font_size="16sp"
+        )
+        warning_msg.bind(size=warning_msg.setter('text_size')) 
+        
+        close_btn = Button(
+            text="UNDERSTOOD", 
+            size_hint_y=None, 
+            height="55dp",
+            font_size="16sp",
+            bold=True,
+            background_normal='',
+            background_color=(0.8, 0.2, 0.2, 1)
+        )
+        
+        content.add_widget(warning_msg)
+        content.add_widget(close_btn)
+        
+        empty_popup = Popup(
+            title="DISPENSER EMPTY",
+            content=content,
+            size_hint=(0.75, 0.4),
+            auto_dismiss=False, 
+            title_size="18sp",
+            title_color=(0.9, 0.1, 0.1, 1),
+            separator_color=(0.9, 0.1, 0.1, 1)
+        )
+        
+        # 2. Unlock the pop-up status when it closes
+        def on_popup_dismiss(*args):
+            self._is_warning_open = False
+            
+        empty_popup.bind(on_dismiss=on_popup_dismiss)
+        close_btn.bind(on_release=empty_popup.dismiss)
+        
+        empty_popup.open()
+
+
+
+        """Generates and opens a warning popup safely."""
+        # 1. Block duplicate pop-ups if one is already on screen
+        if self._is_warning_open:
+            return
+        self._is_warning_open = True 
+        
+        content = BoxLayout(orientation='vertical', padding="20dp", spacing="15dp")
+        
+        warning_msg = Label(
+            text="No pills left in the container!\n\nPlease go to Settings > Pill Management to refill the software inventory.",
+            halign="center", 
+            valign="middle",
+            font_size="16sp"
+        )
+        warning_msg.bind(size=warning_msg.setter('text_size')) 
+        
+        close_btn = Button(
+            text="UNDERSTOOD", 
+            size_hint_y=None, 
+            height="55dp",
+            font_size="16sp",
+            bold=True,
+            background_normal='',
+            background_color=(0.8, 0.2, 0.2, 1)
+        )
+        
+        content.add_widget(warning_msg)
+        content.add_widget(close_btn)
+        
+        empty_popup = Popup(
+            title="DISPENSER EMPTY",
+            content=content,
+            size_hint=(0.75, 0.4),
+            auto_dismiss=False, 
+            title_size="18sp",
+            title_color=(0.9, 0.1, 0.1, 1),
+            separator_color=(0.9, 0.1, 0.1, 1)
+        )
+        
+        # 2. Unlock the pop-up status when it closes
+        def on_popup_dismiss(*args):
+            self._is_warning_open = False
+            
+        empty_popup.bind(on_dismiss=on_popup_dismiss)
+        close_btn.bind(on_release=empty_popup.dismiss)
+        
+        empty_popup.open()
+
+        """Generates and opens a warning popup when pill count is 0."""
+        
+        # 1. Create a simple layout for the popup content
+        content = BoxLayout(orientation='vertical', padding="20dp", spacing="15dp")
+        
+        # 2. Add the warning text
+        warning_msg = Label(
+            text="No pills left in the container!\n\nPlease go to Settings > Pill Management to refill the software inventory.",
+            halign="center", 
+            valign="middle",
+            font_size="16sp"
+        )
+        # Ensure the text wraps cleanly inside the popup
+        warning_msg.bind(size=warning_msg.setter('text_size')) 
+        
+        # 3. Add an acknowledgment button
+        close_btn = Button(
+            text="UNDERSTOOD", 
+            size_hint_y=None, 
+            height="55dp",
+            font_size="16sp",
+            bold=True,
+            background_normal='',
+            background_color=(0.8, 0.2, 0.2, 1) # Red for alert
+        )
+        
+        # Assemble the content
+        content.add_widget(warning_msg)
+        content.add_widget(close_btn)
+        
+        # 4. Create the actual Popup window
+        empty_popup = Popup(
+            title="DISPENSER EMPTY",
+            content=content,
+            size_hint=(0.75, 0.4),
+            auto_dismiss=False, # Forces the user to click the button
+            title_size="18sp",
+            title_color=(0.9, 0.1, 0.1, 1),
+            separator_color=(0.9, 0.1, 0.1, 1)
+        )
+        
+        # 5. Bind the button to close the popup and open it
+        close_btn.bind(on_release=empty_popup.dismiss)
+        empty_popup.open()
+
+
+
+        """Decreases the pill count and sends the ROTATE command to the Arduino."""
+        if self.pill_count > 0:
+            self.pill_count -= 1
+            print(f"Medicine dispensed. Pills remaining: {self.pill_count}")
+            # Call your existing serial command function
+            self.send_rotate_command() 
+        else:
+            print("Cannot dispense: No pills left in the container!")
+
+
     def on_start(self):
+        try:
+            # '/dev/ttyACM0' is the standard USB serial port for Arduino on a Pi.
+            # If you are using the RX/TX pins, it might be '/dev/serial0'.
+            self.arduino_serial = serial.Serial('/dev/ttyACM0', baudrate=9600, timeout=1)
+            print("Successfully connected to Arduino R4 via Serial.")
+        except serial.SerialException as e:
+            print(f"Failed to connect to Arduino: {e}")
+            self.arduino_serial = None
+
+        
         """
         Starts the internal clock to check for alarms.
         """
         print("[SYSTEM] Medical Alarm Service: ONLINE (800x480 Mode)")
         Clock.schedule_interval(self.service_alarm_check, 1)
+
 
     def service_alarm_check(self, dt):
         """
@@ -2090,15 +2406,83 @@ class PagtultolApp(App):
         except Exception as e:
             print(f"Error in alarm service: {e}")
 
-    def buzzer(self):
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(17, GPIO.OUT)
-        GPIO.output(17, 1)
-        sleep(1)
-        GPIO.output(17, 0)
-        sleep(1)
 
     def trigger_medical_alert(self, message="It is time for your scheduled medication."):
+        """Step 1: Start the first buzz and prepare the UI in the background."""
+        
+        # 1. Setup GPIO and turn buzzer ON for the very first ring
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(17, GPIO.OUT)
+            GPIO.output(17, 1)  # Turn ON
+        except Exception as e:
+            print(f"Buzzer start error: {e}")
+
+        # 2. Prepare the Popup UI (but don't open it yet)
+        content = Factory.MedicalAlertContent()
+        content.ids.alert_message.text = message
+
+        self._alert_popup = Popup(
+            title="[+] SCHEDULED DOSAGE",
+            content=content,
+            size_hint=(0.8, 0.5),
+            auto_dismiss=False, 
+            title_size="18sp",
+            title_color=(1, 1, 1, 1),
+            separator_color=(0.2, 0.7, 0.9, 1), # Clinical Blue divider
+            background_color=(0.05, 0.1, 0.15, 1) # Subtle blue-tinted background
+        )
+
+        # 3. Define what happens when "PROCEED TO VITALS" is clicked
+        def on_proceed_click(*args):
+            self._alert_popup.dismiss()
+            
+            if self.buzzer_event:
+                self.buzzer_event.cancel()
+                self.buzzer_event = None
+            
+            try:
+                GPIO.output(17, 0)
+            except Exception as e:
+                print(f"Buzzer stop error: {e}")
+                
+            app = App.get_running_app()
+            if app:
+                # --- CALL THE THREAD-SAFE OVERRIDE HERE ---
+                app.unlock_medicine_button()
+                
+                if app.root:
+                    app.root.current = 'vitals'
+
+            self._alert_popup.dismiss()
+            
+            if self.buzzer_event:
+                self.buzzer_event.cancel()
+                self.buzzer_event = None
+            
+            try:
+                GPIO.output(17, 0)
+            except Exception as e:
+                print(f"Buzzer stop error: {e}")
+                
+            # --- THE FIX: Use 'self' directly to trigger Kivy's UI update ---
+            self.can_take_medicine = True
+            print(f"SYSTEM: Button unlocked. can_take_medicine is now {self.can_take_medicine}")
+            
+            # Switch to vitals screen
+            if self.root:
+                self.root.current = 'vitals'
+
+                
+        content.ids.btn_vitals.bind(on_release=on_proceed_click)
+                
+        # Bind the function to the button
+        content.ids.btn_vitals.bind(on_release=on_proceed_click)
+
+        # 4. Wait exactly 1 second for the buzzer to ring, THEN trigger Step 2
+        Clock.schedule_once(self.show_popup_and_loop, 1.0)
+
+
         # 1. Instantiate the UI from the KV file
         content = Factory.MedicalAlertContent()
        
@@ -2138,18 +2522,33 @@ class PagtultolApp(App):
 
         # 5. Open the Popup and trigger the buzzer (1 sec ON, 1 sec OFF)
         self._alert_popup.open()
+    
+    
+    def show_popup_and_loop(self, dt):
+        """Step 2: Turn off the first buzz, show the popup, and start looping."""
         
-        # try:
-            # if 'buzzer' in globals() and buzzer is not None:
-                # GPIO.output(17, 1)
-                # sleep(1)
-                # GPIO.output(17, 0)
-                # sleep(1)
-        # except Exception as e:
-            # print(f"Buzzer start error: {e}")
-        
-        self.buzzer()
-        
+        # 1. Turn buzzer OFF (finishing the initial 1-second ring)
+        try:
+            GPIO.output(17, 0)
+        except Exception as e:
+            print(f"Buzzer stop error: {e}")
+
+        # 2. Render the pop-up on the screen
+        if self._alert_popup:
+            self._alert_popup.open()
+
+        # 3. Start the continuous 1-second interval loop while popup is active
+        self.buzzer_state = False
+        self.buzzer_event = Clock.schedule_interval(self.toggle_buzzer, 1.0)
+
+
+    def toggle_buzzer(self, dt):
+        """Step 3: Continuous ON/OFF loop triggered by the Clock interval."""
+        try:
+            self.buzzer_state = not self.buzzer_state
+            GPIO.output(17, 1 if self.buzzer_state else 0)
+        except Exception as e:
+            print(f"Buzzer toggle error: {e}")
 
 
     def save_chat_message(self, role, text):
@@ -2161,6 +2560,7 @@ class PagtultolApp(App):
                 json.dump(self.chat_history, f, indent=4)
         except: pass
 
+
     def clear_chat_data(self):
         """Clears the chat storage."""
         self.chat_history = []
@@ -2170,8 +2570,60 @@ class PagtultolApp(App):
         except: pass
 
 
+# --- SERIAL COMMAND LOGIC ---
+    def send_rotate_command(self):
+        """Sends the ROTATE command to the Arduino via Serial."""
+        if self.arduino_serial and self.arduino_serial.is_open:
+            try:
+                # We send the command as a byte string, ending with a newline character
+                self.arduino_serial.write(b"ROTATE\n")
+                print("Command sent: ROTATE")
+            except Exception as e:
+                print(f"Error sending serial command: {e}")
+        else:
+            print("Cannot send command: Serial port is not open.")
 
+        """Sends the ROTATE command to the Arduino R4 WiFi."""
+        
+        # Replace this IP address with the actual IP of your Arduino R4 WiFi
+        # The '/rotate' part matches the endpoint you set up on the Arduino
+        r4_wifi_url = "http://192.168.1.100/rotate" 
+        
+        # Callback for a successful connection
+        def on_success(request, result):
+            print("Success: ROTATE command sent to R4 WiFi.")
+            
+        # Callback if the Arduino is unreachable or returns an error
+        def on_failure(request, result):
+            print(f"Failed to connect to R4 WiFi. Result: {result}")
+            
+        # Callback if there is a network error (e.g., Pi is disconnected)
+        def on_error(request, error):
+            print(f"Network Error: Could not reach R4 WiFi. Error: {error}")
+
+        # Send the request in the background so the UI doesn't freeze
+        print(f"Attempting to send command to {r4_wifi_url}...")
+        UrlRequest(
+            url=r4_wifi_url, 
+            on_success=on_success, 
+            on_failure=on_failure, 
+            on_error=on_error,
+            timeout=5 # Gives up after 5 seconds if no response
+        )
+
+
+    def on_stop(self):
+        """Ensure the serial port is safely closed when the app exits."""
+        if self.arduino_serial and self.arduino_serial.is_open:
+            self.arduino_serial.close()
+            print("Serial connection closed.")
+
+
+
+    
+
+
+
+    
 if __name__ == "__main__":
     PagtultolApp().run()
-
-
