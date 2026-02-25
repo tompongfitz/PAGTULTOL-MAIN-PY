@@ -195,6 +195,7 @@
     SettingsScreen:
     DateTimeScreen:
     AlarmScreen:
+    PillManagementScreen:
 
 # 2. BLACK SCREEN (Startup)
 <BlackScreen>:
@@ -611,7 +612,37 @@
             #       # Disabled normal color (greyed out look)
             #       disabled_color: 0.5, 0.5, 0.5, 1
             #       on_release: root.save_reading()
+            
+			# --- MEDICINE BUTTON (Inside your Vitals screen) ---
+				Button:
+					id: btn_take_medicine   # <-- ADD THIS ID
+					text: 'TAKE YOUR MEDICINE'
+					size_hint_y: None
+					height: '55dp'
+					font_size: '18sp'
+					bold: True
+					
+					# Hardcode the starting state to locked
+					disabled: True 
+					
+					background_normal: '' 
+					background_disabled_normal: ''
+					
+					# Hardcode the starting color to Gray
+					background_color: (0.3, 0.3, 0.3, 1) 
+					
+					on_release: app.take_medicine_action()
 
+
+
+
+
+
+
+
+
+
+            
                 Label:
                     text: "CLASSIFICATION"
                     background_normal: ''
@@ -1379,12 +1410,90 @@
                         pos: self.pos
                         size: self.size
                         radius: [8,]
+                        
+            Button:
+				text: 'PILL MANAGEMENT'
+				size_hint_y: None
+				height: '55dp'
+				font_size: '16sp'
+				bold: True
+				# Navigates to the new screen
+				on_release: app.root.current = 'pill_management'
+
 
             # Spacer to push buttons to top
             Widget:
 
+<PillManagementScreen@Screen>:
+    name: 'pill_management'
+    BoxLayout:
+        orientation: 'vertical'
+        padding: "25dp"
+        spacing: "20dp"
+        
+        # --- CLINICAL HEADER ---
+        Label:
+            text: '[+] DISPENSER INVENTORY'
+            font_size: '24sp'
+            bold: True
+            size_hint_y: 0.15
+            color: (0.2, 0.7, 0.9, 1) # Clinical Blue
 
-# --- DATE AND TIME SCREEN ---
+        # --- STATUS DISPLAY ---
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: 0.55
+            spacing: "5dp"
+            
+            Label:
+                text: 'Dosages Remaining:'
+                font_size: '20sp'
+                size_hint_y: 0.3
+                color: (0.8, 0.8, 0.8, 1)
+                
+            Label:
+                text: f'{app.pill_count} / 8'
+                font_size: '65sp'
+                bold: True
+                # Color shifts from Medical Green to Warning Orange to Emergency Red
+                color: (0.2, 0.8, 0.5, 1) if app.pill_count > 2 else ((0.9, 0.6, 0.1, 1) if app.pill_count > 0 else (0.9, 0.1, 0.1, 1))
+                size_hint_y: 0.7
+
+        # --- ADJUSTMENT CONTROLS ---
+        BoxLayout:
+            orientation: 'horizontal'
+            size_hint_y: 0.15
+            spacing: "15dp"
+            
+            Button:
+                text: 'DISPENSE [-1]'
+                font_size: '18sp'
+                bold: True
+                background_normal: ''
+                background_color: (0.8, 0.4, 0.4, 1) # Soft Red
+                on_release: app.manual_decrement()
+                
+            Button:
+                text: 'LOAD PILL [+1]'
+                font_size: '18sp'
+                bold: True
+                background_normal: ''
+                background_color: (0.2, 0.7, 0.5, 1) # Medical Green
+                # Triggers the new +1 function
+                on_release: app.manual_increment()
+
+        # --- FOOTER ---
+        Button:
+            text: 'RETURN TO DASHBOARD'
+            size_hint_y: 0.15
+            font_size: '16sp'
+            bold: True
+            background_normal: ''
+            background_color: (0.3, 0.4, 0.5, 1) # Slate Blue
+            on_release: if app.check_debounce(): app.root.current = 'settings'
+
+
+
 # --- DATE AND TIME SCREEN ---
 <DateTimeScreen>:
     name: "datetime"
@@ -1875,7 +1984,6 @@
                     pos: self.pos
                     size: self.size
                     radius: [8,]
-
 
 
 
