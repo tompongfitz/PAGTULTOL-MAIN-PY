@@ -10,8 +10,9 @@
 //#include <OneWire.h>
 //#include <DallasTemperature.h>
 #include "BP.h"
+#include "Bonezegei_ULN2003_Stepper.h"
 
-// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------  
 //  HARDWARE CONFIGURATION
 // ---------------------------------------------------------------------------
 //#define ONE_WIRE_BUS 4    // DS18B20 Pin
@@ -23,6 +24,16 @@
 #define LORA_SS      10
 #define LORA_RST     9
 #define LORA_DIO0    2
+
+#define FORWARD 1
+#define REVERSE 0
+
+Bonezegei_ULN2003_Stepper Stepper(0, 1, 2, 4);
+
+bool isAlarmActive = false;
+unsigned long previousBuzzerMillis = 0;
+bool buzzerState = LOW;
+
 
 // ---------------------------------------------------------------------------
 //  INITIALIZATION
@@ -42,11 +53,16 @@
 
 void setup() {
   // 1. Initialize Serial (Communication with Python)
+  Stepper.begin();
+  Stepper.setSpeed(5);
+  
   Serial.begin(9600);
   delay(500);
 
 
   // 2. Initialize Hardware
+  pinMode(BUZZER, OUTPUT);
+  digitalWrite(BUZZER, LOW);
   pinMode(BP_START_PIN, OUTPUT);  
   pinMode(TX_LED_PIN, OUTPUT);
   digitalWrite(BP_START_PIN, HIGH);
@@ -139,6 +155,27 @@ void loop() {
         digitalWrite(7, LOW);
         delay(500);
         }
+      else if (command == "ALARM_ON") {
+        isAlarmActive = true;
+        }
+      else if (command == "ALARM_OFF") {
+        isAlarmActive = false;
+        digitalWrite(BUZZER, LOW);
+        }
+      else if (command == "ROTATE")
+        Stepper.step(REVERSE, 127);
       }
+    if (isAlarmActive) {
+      unsigned long currentMillis = millis();
+      if (currentMillis - previousBuzzerMillis >= 1000) { // 1000 ms = 1 second
+        previousBuzzerMillis = currentMillis;
+        buzzerState = !buzzerState; // Toggle state between HIGH and LOW
+        digitalWrite(BUZZER, buzzerState);
+      }
+    } else {
+      digitalWrite(BUZZER, LOW);
+    }
+      
+
    BP_getData(); 
 }
