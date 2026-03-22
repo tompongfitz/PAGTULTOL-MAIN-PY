@@ -99,6 +99,32 @@ void showWelcomeScreen() {
   tft.setTextDatum(TL_DATUM);
 }
 
+void showWarningScreen() {
+  tft.fillScreen(MED_BG);
+ 
+  // Decorative Border
+  tft.drawRect(5, 5, 470, 310, MED_ALERT);
+  tft.drawRect(7, 7, 466, 306, MED_ALERT);
+
+  // Centered Text
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(1);
+
+  // Title
+  tft.setTextColor(MED_ALERT, MED_BG);
+  tft.drawString("WARNING!!!", 240, 100, 4);
+
+  // Subtitle
+  tft.setTextColor(MED_TEXT, MED_BG);
+  tft.drawString("The patient did not take the medicine", 240, 140, 4);
+
+  // Loading...
+
+
+  tft.setTextDatum(TL_DATUM);
+}
+
+
 void drawMedicalInterface() {
   // 1. Draw Background Grid
   for (int i = 0; i < 480; i += 40) tft.drawFastVLine(i, 0, 320, MED_GRID);
@@ -248,7 +274,21 @@ void loop() {
         updateStatus("ABORTED", MED_OK);
         // Data stays on screen (No reset)
     }
-    else {
+    else if (loRaData == "NO") {
+      showWarningScreen();
+      for (int i = 0; i <= 20; i++) {
+        digitalWrite(RX_LED_PIN, HIGH);
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(250);
+        digitalWrite(RX_LED_PIN, LOW);
+        digitalWrite(BUZZER_PIN, LOW);
+        delay(250);
+      }
+      tft.fillScreen(MED_BG);
+      drawMedicalInterface();
+      updateStatus("SECURE LINK READY", MED_OK);
+    }
+    else {y
         int commaIndex = loRaData.indexOf(', ');
         int commaIndex2 = loRaData.indexOf(', ', commaIndex + 1);
         String sys = loRaData.substring(0, commaIndex);      // "125"
