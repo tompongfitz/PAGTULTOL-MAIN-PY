@@ -81,4 +81,47 @@ void loop() {
         LoRa.print("START_SCAN");
         LoRa.endPacket();
         digitalWrite(TX_LED_PIN, HIGH);
-        digitalWrite(
+        digitalWrite(BP_START_PIN, LOW);
+        delay(200);
+        digitalWrite(BP_START_PIN, HIGH);
+      }
+      else if (command == "STOP") {
+        LoRa.beginPacket();
+        LoRa.print("STOP_SCAN");
+        LoRa.endPacket();
+        digitalWrite(TX_LED_PIN, LOW);
+        digitalWrite(BP_START_PIN, LOW);
+        delay(200);
+        digitalWrite(BP_START_PIN, HIGH);
+      }
+      else if (command == "BEEP") {
+        digitalWrite(7, HIGH);
+        delay(500);
+        digitalWrite(7, LOW);
+        delay(500);
+      }
+      else if (command == "ALARM_ON") {
+        isAlarmActive = true;
+      }
+      else if (command == "ALARM_OFF") {
+        isAlarmActive = false;
+        digitalWrite(BUZZER, LOW);
+      }
+      else if (command == "ROTATE") {
+        Stepper.step(REVERSE, 127);
+      }
+    }
+    
+    if (isAlarmActive) {
+      unsigned long currentMillis = millis();
+      if (currentMillis - previousBuzzerMillis >= 1000) {
+        previousBuzzerMillis = currentMillis;
+        buzzerState = !buzzerState;
+        digitalWrite(BUZZER, buzzerState);
+      }
+    } else {
+      digitalWrite(BUZZER, LOW);
+    }
+      
+   BP_getData(); 
+}
