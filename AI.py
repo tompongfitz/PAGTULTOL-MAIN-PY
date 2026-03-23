@@ -1,4 +1,3 @@
-# 1. SETUP CONFIG FIRST (Must be at the very top)
 import os
 from kivy.config import Config
 import json
@@ -27,40 +26,36 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import ScreenManager, Screen, FadeTransition
+from kivy.uix.widget import Widget
 from kivy.core.window import Window
-from kivy.properties import StringProperty, BooleanProperty
-from kivy.graphics import Color, RoundedRectangle
+from kivy.properties import StringProperty, BooleanProperty, NumericProperty
 from kivy.network.urlrequest import UrlRequest 
-from kivy.properties import NumericProperty, BooleanProperty
+from kivy.graphics import Color, RoundedRectangle
 
-
-# --- CONFIGURATION ---
 ALARM_FILE = "alarms.json"
-LOG_FILE = "patient_logs.txt"   # Name of the file where vital signs are saved
-CHAT_FILE = "chat_history.json" # Name of the file where chat history is saved
-TARGET_PHONE_NUMBER = "+639171234567" # REPLACE THIS WITH THE DOCTOR/GUARDIAN NUMBER
+LOG_FILE = "patient_logs.txt"   
+CHAT_FILE = "chat_history.json" 
+INVENTORY_FILE = "inventory.json" 
+TARGET_PHONE_NUMBER = "+639171234567" 
 
-# This ensures the window opens in fullscreen immediately
 Config.set('graphics', 'fullscreen', 'auto')
 Config.set('graphics', 'window_state', 'maximized')
 
-    
-def send_vitals_to_dashboard(sys, dia, hr):
-    # Package the vitals into a JSON dictionary
+  
+def send_vitals_to_dashboard(sys, dia, hr, classification):
     data = {
         "systolic": sys,
         "diastolic": dia,
-        "heart_rate": hr
+        "heart_rate": hr,
+        "classification": classification 
     }
     
-    # Convert dictionary to JSON string and publish to the topic
     payload = json.dumps(data)
     mqtt_client.publish("vitals/data", payload)
     print(f"Published to Node-RED: {payload}")
 
 
 def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
         base_path = sys._MEIPASS
     except Exception:
@@ -77,41 +72,41 @@ def clean_response(text):
     return text.strip()
 
 
-# Load KV file
+class WifiSignalIcon(Widget):
+    strength = NumericProperty(0)
+
+
 Builder.load_file(resource_path("new design.kv"))
 
 
-# Ollama settings
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "deepseek-v3.1:671b-cloud"
 
-# Setup the MQTT Client
 mqtt_client = mqtt.Client()
 
-# Connect to the Mosquitto broker running on the same device
-mqtt_client.connect("localhost", 1883, 60)
+try:
+    mqtt_client.connect("localhost", 1883, 60)
+    mqtt_client.loop_start()
+except Exception as e:
+    print(f"MQTT Connection Error: {e}")
    
    
 class BlackScreen(Screen):
     def on_enter(self):
         Clock.schedule_once(lambda dt: self.switch_to_welcome(), 1.5)
 
-
     def switch_to_welcome(self):
         self.manager.current = "welcome"
-
 
 
 class WelcomeScreen(Screen):
     pass
 
 
-
 class MenuScreen(Screen):
     _last_click = 0
     clock_event = None
     wifi_check_event = None
-
 
     def go_to_settings(self):
         if time.time() - self._last_click < 0.05: return
@@ -120,12 +115,9 @@ class MenuScreen(Screen):
 
 
     def on_enter(self):
-        # Trigger an immediate update
         self.update_clock(0)
-        # Schedule updates every 1 second
         self.clock_event = Clock.schedule_interval(self.update_clock, 1)
-       
-        # Check Wifi immediately then every 5 seconds
+        
         self.check_wifi_status(0)
         self.wifi_check_event = Clock.schedule_interval(self.check_wifi_status, 5)
 
@@ -140,18 +132,15 @@ class MenuScreen(Screen):
 
 
     def update_clock(self, dt):
-        # Get current time (System time, synced with DS3231 via OS)
         now = datetime.now()
         time_str = now.strftime("%I:%M:%S %p")
         date_str = now.strftime("%b %d, %Y")
-       
+        
         try:
             self.ids.menu_clock.text = time_str
             self.ids.menu_date.text = date_str
-        except KeyError:
-            print("ERROR: Clock IDs not found in MenuScreen. Check .kv file.")
-        except AttributeError:
-             print("ERROR: Attribute Error on Clock Update.")
+        except Exception:
+            pass
    
    
     def check_wifi_status(self, dt):
@@ -160,46 +149,74 @@ class MenuScreen(Screen):
 
     def _perform_wifi_check(self):
         is_connected = False
+        signal_level = 0
         try:
             if platform.system() == "Windows":
-                # Simple check for Windows with timeout
                 try:
                     output = subprocess.check_output("netsh wlan show interfaces", shell=True, timeout=3).decode(errors='ignore')
                     if "State" in output and "connected" in output:
                         is_connected = True
+                        for line in output.splitlines():
+                            if "Signal" in line:
+                                sig_str = line.split(":")[-1].strip().replace('%', '')
+                                try:
+                                    signal_level = int(sig_str)
+                                except:
+                                    signal_level = 100
+                                break
                 except: pass
             else:
-                # Linux / nmcli with timeout
                 try:
-                    # Check for any active connection on wifi device using nmcli
-                    output = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "DEVICE,STATE", "dev"], timeout=3).decode('utf-8', errors='ignore')
+                    output = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "ACTIVE,SIGNAL", "dev", "wifi"], timeout=3).decode('utf-8', errors='ignore')
                     for line in output.splitlines():
-                        if "wlan" in line or "wifi" in line:
-                             if ":connected" in line:
-                                 is_connected = True
-                                 break
+                        if line.startswith("yes:"):
+                            is_connected = True
+                            parts = line.split(":")
+                            if len(parts) > 1:
+                                try:
+                                    signal_level = int(parts[1])
+                                except:
+                                    signal_level = 100
+                            break
+                    
+                    if not is_connected:
+                        output2 = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "DEVICE,STATE", "dev"], timeout=3).decode('utf-8', errors='ignore')
+                        for line in output2.splitlines():
+                            if ("wlan" in line or "wifi" in line) and ":connected" in line:
+                                is_connected = True
+                                signal_level = 75 
+                                break
                 except: pass
         except Exception as e:
             print(f"Wifi Check Error: {e}")
         finally:
-            # Always update UI, even if check failed
-            Clock.schedule_once(partial(self._update_wifi_button, is_connected), 0)
+            Clock.schedule_once(partial(self._update_wifi_button, is_connected, signal_level), 0)
 
 
-    def _update_wifi_button(self, is_connected, dt):
-        # Update Wifi Button
+    def _update_wifi_button(self, is_connected, signal_level, dt):
         status_text = "CONNECTED" if is_connected else "NOT CONNECTED"
-        color_hex = "00FF00" if is_connected else "FF5555" # Green / Red
-       
+        color_hex = "00FF00" if is_connected else "FF5555"
+        
         if self.ids.get("wifi_btn"):
             self.ids.wifi_btn.text = f"[size=18][b]WI-FI SETTINGS[/b][/size]\n[size=12]Network Configuration\nStatus: [color={color_hex}]{status_text}[/color][/size]"
 
-
-        # Update AI Button
         ai_status = "ONLINE" if is_connected else "OFFLINE"
         ai_color = "AAFFAA" if is_connected else "FF5555"
         if self.ids.get("ai_btn"):
             self.ids.ai_btn.text = f"[size=18][b]AI ASSISTANT[/b][/size]\n[size=12]Interactive Chat Module\nSystem Status: [color={ai_color}]{ai_status}[/color][/size]"
+
+        strength = 0
+        if is_connected:
+            if signal_level > 80: strength = 4
+            elif signal_level > 60: strength = 3
+            elif signal_level > 30: strength = 2
+            else: strength = 1
+            
+        if "menu_wifi_icon" in self.ids:
+            self.ids.menu_wifi_icon.strength = strength
+            
+        if "menu_wifi_label" in self.ids:
+            self.ids.menu_wifi_label.text = f"{signal_level}%" if is_connected else "Offline"
 
 
     def go_to_chat(self):
@@ -212,8 +229,8 @@ class MenuScreen(Screen):
         if time.time() - self._last_click < 0.05: return
         self._last_click = time.time()
         self.manager.current = "vitals"
-       
-       
+        
+        
     def go_to_wifi(self):
         if time.time() - self._last_click < 0.05: return
         self._last_click = time.time()
@@ -221,25 +238,21 @@ class MenuScreen(Screen):
 
 
     def show_power_options(self):
-        # --- DEBOUNCE LOGIC ---
         if time.time() - self._last_click < 0.5:
             return
         self._last_click = time.time()
 
-
-        # --- OPEN POPUP ---
         content = Factory.PowerPopup()
         self._power_popup = Popup(
-            title="MAINTENANCE",  # Short, professional title
+            title="MAINTENANCE",  
             content=content,
-            size_hint=(0.7, 0.5), # Slightly taller for better spacing
+            size_hint=(0.7, 0.5), 
             auto_dismiss=True,
             title_size="14sp",
-            title_color=(0.2, 0.6, 1, 1), # Medical Blue Title
-            separator_color=(0.9, 0.9, 0.9, 1), # Very subtle separator
-            background_color=(0.95, 0.95, 0.95, 1) # Match popup bg
+            title_color=(0.2, 0.6, 1, 1), 
+            separator_color=(0.9, 0.9, 0.9, 1), 
+            background_color=(0.95, 0.95, 0.95, 1) 
         )
-
 
         content.ids.btn_shutdown.bind(on_release=self.exec_shutdown)
         content.ids.btn_reboot.bind(on_release=self.exec_reboot)
@@ -264,30 +277,26 @@ class MenuScreen(Screen):
             threading.Thread(target=lambda: os.system("sudo reboot")).start()
 
 
-
 class WifiScreen(Screen):
     scanning = False
-    # Keyboard Attributes
     caps_enabled = False
     shift_enabled = False
     keyboard_page = 0
-    _last_key_down = None # Track last key name
+    _last_key_down = None 
     _last_key_time = 0.0
+    _last_click = 0.0
     selected_ssid = ""
-    # Network State
-    cached_networks = []  # List of dicts: {'ssid': str, 'active': bool}
-    expanded_ssid = None  # Tracks which SSID is currently "expanded" in the UI
+    cached_networks = []  
+    expanded_ssid = None  
 
 
     def __init__(self, **kwargs):
         super(WifiScreen, self).__init__(**kwargs)
         self.selected_ssid = ""
 
-	
+    
     def on_enter(self):
-        # Ensure we start on the list view
         self.ids.wifi_sm.current = "list"
-        # Check if switch is active before scanning
         if self.ids.wifi_switch.active:
             self.scan_wifi()
         else:
@@ -299,7 +308,6 @@ class WifiScreen(Screen):
         self.manager.current = "menu"
 
 
-    # --- TOGGLE WIFI ---
     def toggle_wifi_state(self, is_active):
         if is_active:
             self.ids.wifi_status.text = "Enabling Wi-Fi..."
@@ -313,7 +321,6 @@ class WifiScreen(Screen):
 
 
     def _set_system_wifi(self, turn_on):
-        """ Attempts to turn system wifi on/off via nmcli on Linux """
         if platform.system() != "Windows":
             state = "on" if turn_on else "off"
             try:
@@ -322,30 +329,26 @@ class WifiScreen(Screen):
                 pass
 
 
-    # --- SCANNING LOGIC ---
     def scan_wifi(self):
         if self.scanning: return
-        # Don't scan if switch is off
         if not self.ids.wifi_switch.active:
             self.ids.wifi_status.text = "Wi-Fi is off. Enable to scan."
             return
 
-
         self.scanning = True
-        self.expanded_ssid = None # Reset expansion on scan
+        self.expanded_ssid = None 
         self.ids.wifi_status.text = "Scanning for networks..."
         self.ids.wifi_list_layout.clear_widgets()
         threading.Thread(target=self._perform_scan, daemon=True).start()
 
 
     def _perform_scan(self):
-        networks_data = [] # List of {'ssid': name, 'active': bool}
+        networks_data = []
         found_ssids = set()
         system = platform.system()
-       
+        
         try:
             if system == "Windows":
-                # Windows logic with timeout
                 try:
                     cmd = subprocess.check_output("netsh wlan show networks mode=bssid", shell=True, timeout=5)
                     decoded = cmd.decode('utf-8', errors='ignore')
@@ -357,17 +360,13 @@ class WifiScreen(Screen):
                                 networks_data.append({'ssid': ssid, 'active': False})
                                 found_ssids.add(ssid)
                 except subprocess.TimeoutExpired:
-                    print("Windows scan timed out")
-
+                    pass
             else:
-                # Linux/Pi: Get ACTIVE status + SSID
-                # 1. Try to rescan first (refresh list)
                 try:
                     subprocess.run(["sudo", "/usr/bin/nmcli", "device", "wifi", "rescan"], timeout=5)
                 except Exception:
                     pass
-               
-                # 2. Get list with timeout
+                
                 try:
                     cmd = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi", "list"], timeout=10)
                     decoded = cmd.decode('utf-8', errors='ignore')
@@ -376,71 +375,19 @@ class WifiScreen(Screen):
                             active_str, ssid = line.split(":", 1)
                             ssid = ssid.strip()
                             is_active = (active_str.lower() == 'yes')
-                           
+                            
                             if ssid and ssid not in found_ssids and "--" not in ssid:
                                 networks_data.append({'ssid': ssid, 'active': is_active})
                                 found_ssids.add(ssid)
                 except subprocess.TimeoutExpired:
-                    print("Linux scan timed out")
-                           
+                    pass
+                            
         except Exception as e:
-            print(f"Scan Error: {e}")
             Clock.schedule_once(lambda dt: self._update_status(f"Scan Error"), 0)
             self.scanning = False
             return
 
-        # Sort: Active first, then Alphabetical
         networks_data.sort(key=lambda x: (not x['active'], x['ssid']))
-       
-        self.cached_networks = networks_data
-        Clock.schedule_once(lambda dt: self._render_network_list(), 0)
-
-
-
-        networks_data = [] # List of {'ssid': name, 'active': bool}
-        found_ssids = set()
-        system = platform.system()
-       
-        try:
-            if system == "Windows":
-                cmd = subprocess.check_output("netsh wlan show networks mode=bssid", shell=True)
-                decoded = cmd.decode('utf-8', errors='ignore')
-                for line in decoded.split('\n'):
-                    if "SSID" in line and ":" in line:
-                        parts = line.split(":", 1)
-                        ssid = parts[1].strip()
-                        if ssid and ssid not in found_ssids:
-                            # Basic Windows logic (assuming not active for now or simple list)
-                            networks_data.append({'ssid': ssid, 'active': False})
-                            found_ssids.add(ssid)
-            else:
-                # Linux/Pi: Get ACTIVE status + SSID
-                # Try to rescan first
-                try: subprocess.run(["sudo", "/usr/bin/nmcli", "device", "wifi", "rescan"], timeout=5)
-                except: pass
-               
-                cmd = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi", "list"])
-                decoded = cmd.decode('utf-8', errors='ignore')
-                for line in decoded.split('\n'):
-                    if ":" in line:
-                        active_str, ssid = line.split(":", 1)
-                        ssid = ssid.strip()
-                        is_active = (active_str.lower() == 'yes')
-                       
-                        if ssid and ssid not in found_ssids and "--" not in ssid:
-                            # If duplicate SSIDs exist, prioritize the active one or first one
-                            networks_data.append({'ssid': ssid, 'active': is_active})
-                            found_ssids.add(ssid)
-                           
-        except Exception as e:
-            Clock.schedule_once(lambda dt: self._update_status(f"Scan Error or Wi-Fi Off"), 0)
-            self.scanning = False
-            return
-
-
-        # Sort: Active first, then Alphabetical
-        networks_data.sort(key=lambda x: (not x['active'], x['ssid']))
-       
         self.cached_networks = networks_data
         Clock.schedule_once(lambda dt: self._render_network_list(), 0)
 
@@ -450,37 +397,30 @@ class WifiScreen(Screen):
 
 
     def _render_network_list(self):
-        """ Renders the list of networks from self.cached_networks """
         self.ids.wifi_list_layout.clear_widgets()
         self.scanning = False
-       
+        
         if not self.ids.wifi_switch.active:
             self.ids.wifi_status.text = "Wi-Fi is turned off."
             return
-
 
         if not self.cached_networks:
             self.ids.wifi_status.text = "No networks found."
             return
 
-
         self.ids.wifi_status.text = f"Found {len(self.cached_networks)} networks."
-       
+        
         for net in self.cached_networks:
             ssid = net['ssid']
             is_active = net['active']
-           
-            # --- EXPANDED VIEW LOGIC (STRETCHED BOX) ---
+            
             if self.expanded_ssid == ssid:
-                # Create Container (The "Stretched" Box)
                 box = BoxLayout(orientation='vertical', size_hint_y=None, height="110dp", spacing=0)
-               
-                # Add a background to the whole box to make it look like one unit
+                
                 with box.canvas.before:
-                    Color(0.9, 1, 0.9, 1) # Light green background
+                    Color(0.9, 1, 0.9, 1) 
                     RoundedRectangle(pos=box.pos, size=box.size, radius=[6,])
-               
-                # Bind size/pos updates for the canvas to work on a layout created in python
+                
                 def update_canvas(instance, value):
                     instance.canvas.before.clear()
                     with instance.canvas.before:
@@ -488,12 +428,10 @@ class WifiScreen(Screen):
                         RoundedRectangle(pos=instance.pos, size=instance.size, radius=[6,])
                 box.bind(pos=update_canvas, size=update_canvas)
 
-
-                # Top: The SSID Name (Click to collapse)
                 btn_top = Button(
                     text=f"{ssid} (Connected)",
                     background_normal='',
-                    background_color=(0,0,0,0), # Transparent, letting box background show
+                    background_color=(0,0,0,0), 
                     color=(0, 0.6, 0.2, 1),
                     bold=True,
                     font_size=14,
@@ -501,35 +439,26 @@ class WifiScreen(Screen):
                 )
                 btn_top.bind(on_release=lambda x, s=ssid: self.toggle_expand(s))
 
-
-               
-                # Bottom: Disconnect Button
-                # We put this in a padding box to make it look nicer and centered
                 btn_container = BoxLayout(padding=[40, 5, 40, 10], size_hint_y=0.4)
                 btn_action = Button(
                     text="DISCONNECT",
                     background_normal='',
-                    background_color=(0.8, 0.3, 0.3, 1), # Red
+                    background_color=(0.8, 0.3, 0.3, 1), 
                     color=(1, 1, 1, 1),
                     bold=True,
                     font_size=12
                 )
                 btn_action.bind(on_release=lambda x, s=ssid: self.disconnect_wifi(s))
-               
+                
                 btn_container.add_widget(btn_action)
                 box.add_widget(btn_top)
                 box.add_widget(btn_container)
-               
                 self.ids.wifi_list_layout.add_widget(box)
 
-
             else:
-                # --- STANDARD BUTTON LOGIC ---
-                # Active network gets green text, others gray
                 text_col = (0, 0.6, 0.2, 1) if is_active else (0.2, 0.2, 0.2, 1)
                 bg_col = (0.9, 1, 0.9, 1) if is_active else (0.95, 0.95, 0.95, 1)
                 label_text = f"{ssid} (Connected)" if is_active else ssid
-
 
                 btn = Button(
                     text=label_text,
@@ -541,68 +470,41 @@ class WifiScreen(Screen):
                     bold=is_active,
                     font_size=12
                 )
-               
+                
                 if is_active:
-                    # If connected, click triggers expansion
                     btn.bind(on_release=lambda x, s=ssid: self.toggle_expand(s))
                 else:
-                    # If not connected, click triggers password/connect logic
                     btn.bind(on_release=partial(self.prepare_connection, ssid))
-               
+                
                 self.ids.wifi_list_layout.add_widget(btn)
 
 
     def toggle_expand(self, ssid):
-        """ Toggles the expansion of the connected network box """
         if self.expanded_ssid == ssid:
-            self.expanded_ssid = None # Collapse
+            self.expanded_ssid = None 
         else:
-            self.expanded_ssid = ssid # Expand
-       
-        # Re-render list with new state
+            self.expanded_ssid = ssid 
         self._render_network_list()
 
 
     def disconnect_wifi(self, ssid):
-        """ Runs command to disconnect the wifi """
         self.ids.wifi_status.text = f"Disconnecting {ssid}..."
         threading.Thread(target=self._perform_disconnect, args=(ssid,), daemon=True).start()
 
 
     def _perform_disconnect(self, ssid):
         if platform.system() != "Windows":
-            # Linux: nmcli connection down id <ssid>
             try:
                 subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "down", "id", ssid], capture_output=True, timeout=10)
             except Exception as e:
-                print(f"Disconnect Error: {e}")
-       
-        # After disconnect, rescan to update UI
-        Clock.schedule_once(lambda dt: self.scan_wifi(), 1.0)
-
-
-
-        if platform.system() != "Windows":
-            # Linux: nmcli connection down <id>
-            try:
-                subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "down", ssid], capture_output=True)
-            except Exception:
                 pass
-       
-        # After disconnect, rescan to update UI
         Clock.schedule_once(lambda dt: self.scan_wifi(), 1.0)
 
 
-
-
-    # --- PASSWORD & KEYBOARD LOGIC ---
-   
     def has_saved_profile(self, ssid):
-        """ Checks if a connection profile exists for this SSID using nmcli """
         if platform.system() == "Windows":
-            return False # Windows management is complex, skipping logic
+            return False 
         try:
-            # nmcli -g NAME connection show lists all connection names
             output = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-g", "NAME", "connection", "show"], timeout=2).decode('utf-8')
             profiles = output.strip().split('\n')
             return ssid in profiles
@@ -611,15 +513,10 @@ class WifiScreen(Screen):
 
 
     def prepare_connection(self, ssid, instance):
-        # 1. Check for saved profile first
         if self.has_saved_profile(ssid):
             self.ids.wifi_status.text = f"Connecting to saved network: {ssid}..."
-            # Try to connect without password first
             threading.Thread(target=self._perform_saved_connection, args=(ssid,), daemon=True).start()
             return
-
-
-        # 2. If no profile, go to password screen
         self._show_password_screen(ssid)
 
 
@@ -627,47 +524,52 @@ class WifiScreen(Screen):
         self.selected_ssid = ssid
         self.ids.pass_prompt.text = f"Enter Password for: {ssid}"
         self.ids.pass_input.text = ""
+        
+        self.ids.pass_input.password = True
+        if "btn_show_pass" in self.ids:
+            self.ids.btn_show_pass.text = "SHOW"
+            self.ids.btn_show_pass.background_color = (0.8, 0.8, 0.8, 1)
+            self.ids.btn_show_pass.color = (0.2, 0.2, 0.2, 1)
+
         self.ids.wifi_sm.current = "password"
-       
-        # Reset Keyboard
+        
         self.caps_enabled = False
         self.shift_enabled = False
         self.keyboard_page = 0
         self.build_keyboard()
 
 
+    def toggle_show_password(self):
+        if time.time() - getattr(self, '_last_click', 0) < 0.1: return
+        self._last_click = time.time()
+        
+        ti = self.ids.pass_input
+        btn = self.ids.btn_show_pass
+        
+        ti.password = not ti.password
+        
+        if ti.password:
+            btn.text = "SHOW"
+            btn.background_color = (0.8, 0.8, 0.8, 1)
+            btn.color = (0.2, 0.2, 0.2, 1)
+        else:
+            btn.text = "HIDE"
+            btn.background_color = (0.2, 0.6, 1, 1)
+            btn.color = (1, 1, 1, 1)
+
+
     def _perform_saved_connection(self, ssid):
         success = False
         try:
-            # Try to bring up connection using existing profile with "id" flag
             res = subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "up", "id", ssid], capture_output=True, timeout=15)
             if res.returncode == 0:
                 success = True
         except Exception as e:
-            print(f"Saved connection error: {e}")
-       
-        if success:
-            Clock.schedule_once(lambda dt: self.scan_wifi(), 2.0)
-        else:
-            # Fallback to password screen if saved connection fails
-            Clock.schedule_once(lambda dt: self._prompt_password_fallback(ssid), 0)
-
-
-
-        success = False
-        try:
-            # Try to bring up connection using existing profile
-            # nmcli connection up <ssid>
-            res = subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "up", ssid], capture_output=True)
-            if res.returncode == 0:
-                success = True
-        except:
             pass
-       
+        
         if success:
             Clock.schedule_once(lambda dt: self.scan_wifi(), 2.0)
         else:
-            # Fallback to password screen if saved connection fails
             Clock.schedule_once(lambda dt: self._prompt_password_fallback(ssid), 0)
 
 
@@ -697,73 +599,39 @@ class WifiScreen(Screen):
                 Clock.schedule_once(lambda dt: self._update_status("Windows: Connect manually."), 0)
                 return
             else:
-                # 1. Clear any old saved profile for this SSID so the new password works
                 try:
                     subprocess.run(["sudo", "/usr/bin/nmcli", "connection", "delete", "id", ssid], capture_output=True, timeout=5)
                 except subprocess.TimeoutExpired:
                     pass
 
-                # 2. Connect with a timeout to prevent thread freezing
-                cmd = ["sudo", "/usr/bin/nmcli", "device", "wifi", "connect", ssid, "password", password]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-               
-                # Debugging logs
-                print(f"NMCLI Return Code: {result.returncode}")
-                print(f"NMCLI Output: {result.stdout}")
-                print(f"NMCLI Error: {result.stderr}")
-
-                if result.returncode == 0:
-                    success = True
+                cmd_add = [
+                    "sudo", "/usr/bin/nmcli", "connection", "add",
+                    "type", "wifi",
+                    "con-name", ssid,
+                    "ifname", "wlan0", 
+                    "ssid", ssid,
+                    "802-11-wireless-security.key-mgmt", "wpa-psk",
+                    "802-11-wireless-security.psk", password
+                ]
+                
+                result_add = subprocess.run(cmd_add, capture_output=True, text=True, timeout=15)
+                
+                if result_add.returncode == 0:
+                    cmd_up = ["sudo", "/usr/bin/nmcli", "connection", "up", ssid]
+                    result_up = subprocess.run(cmd_up, capture_output=True, text=True, timeout=15)
+                    
+                    if result_up.returncode == 0:
+                        success = True
         except Exception as e:
-            print(f"Connection Error: {e}")
             pass
         
-        # Rescan to show connected status
         Clock.schedule_once(lambda dt: self.scan_wifi(), 2.0)
 
 
-
-        system = platform.system()
-        success = False
-        try:
-            if system == "Windows":
-                # Placeholder for Windows logic
-                Clock.schedule_once(lambda dt: self._update_status("Windows: Connect manually."), 0)
-                return
-            else:
-                # Linux/Pi Connection
-                # NOTE: Removed the 'nmcli connection delete' line here.
-                # We want nmcli to save the profile if connection succeeds.
-
-
-                # 2. Connect
-                cmd = ["sudo", "/usr/bin/nmcli", "device", "wifi", "connect", ssid, "password", password]
-                result = subprocess.run(cmd, capture_output=True, text=True)
-               
-                # Debugging logs (Check console if connection fails)
-                print(f"NMCLI Return Code: {result.returncode}")
-                print(f"NMCLI Output: {result.stdout}")
-                print(f"NMCLI Error: {result.stderr}")
-
-
-                if result.returncode == 0:
-                    success = True
-        except Exception as e:
-            print(f"Connection Error: {e}")
-            pass
-        # Rescan to show connected status
-        Clock.schedule_once(lambda dt: self.scan_wifi(), 2.0)
-
-
-    def _finish_connection(self, success, ssid):
-        pass
-
-
-    # --- KEYBOARD BUILDER (Copied & Adapted for Wifi) ---
     def build_keyboard(self, dt=None):
         layout = self.ids.wifi_keyboard
         layout.clear_widgets()
-       
+        
         if self.keyboard_page == 0:
             rows = [
                 ["q","w","e","r","t","y","u","i","o","p"],
@@ -778,7 +646,7 @@ class WifiScreen(Screen):
                 [".",",","?","!","'","\"","+","=","_","*"],
                 ["MAIN","CLEAR","SPACE","BACK"]
             ]
-       
+        
         key_bg = (0.9, 0.9, 0.9, 1)
         for row_keys in rows:
             row = BoxLayout(spacing=4, padding=(2,0))
@@ -788,20 +656,18 @@ class WifiScreen(Screen):
                 is_capitalized = self.caps_enabled or self.shift_enabled
                 if self.keyboard_page == 0 and key.isalpha():
                     display_text = key.upper() if is_capitalized else key.lower()
-               
+                
                 if key == "SHIFT":
                     if self.shift_enabled: current_bg = [0.0, 0.6, 0.6, 1]
                 elif key == "CAPS":
                     if self.caps_enabled: current_bg = [0.0, 0.6, 0.6, 1]
 
-
                 w_hint = 1.0
                 if key == "SPACE": w_hint = 2.5
                 elif key in ["SHIFT", "CAPS", "MORE", "MAIN", "BACK", "CLEAR"]: w_hint = 1.3
-               
+                
                 text_col = (0.2, 0.2, 0.2, 1)
                 if current_bg[0] < 0.5: text_col = (1,1,1,1)
-
 
                 btn = Button(
                     text=display_text, font_size=12, size_hint_x=w_hint,
@@ -816,30 +682,25 @@ class WifiScreen(Screen):
 
     def on_key_press(self, key_name, instance, *args):
         now = time.time()
-       
-        # --- FIXED DEBOUNCE LOGIC (Consistent with ChatScreen) ---
-        # 1. Global Debounce (fast, for noise)
+        
         if now - self._last_key_time < 0.1:
             return
 
-
-        # 2. Same Key Debounce (prevent double taps)
         if key_name == getattr(self, '_last_key_down', None):
             if now - self._last_key_time < 0.3:
                 return
 
-
         self._last_key_down = key_name
         self._last_key_time = now
-       
+        
         orig_color = instance.background_color
         instance.background_color = (0.0, 0.8, 0.8, 1)
         if key_name not in ["SHIFT", "CAPS"] or not (self.shift_enabled or self.caps_enabled):
              Clock.schedule_once(lambda dt: setattr(instance, 'background_color', orig_color), 0.1)
-       
+        
         key = key_name
         ti = self.ids.pass_input
-       
+        
         if key=="SPACE": ti.text+=" "; return
         if key=="BACK": ti.text=ti.text[:-1]; return
         if key=="CLEAR": ti.text=""; return
@@ -853,7 +714,7 @@ class WifiScreen(Screen):
             return
         if key=="MORE": self.keyboard_page=1; self.build_keyboard(); return
         if key=="MAIN": self.keyboard_page=0; self.build_keyboard(); return
-       
+        
         if len(key) == 1:
             is_capitalized = (self.caps_enabled or self.shift_enabled) and self.keyboard_page == 0
             ch = instance.text if key.isalpha() else key
@@ -875,170 +736,172 @@ class VitalSignsScreen(Screen):
     has_unsaved_data = False
     _last_click = 0
     ser = None
-
+    
+    auto_action_event = None    
 
     def on_enter(self):
         self.stop_thread = False
-       
-        # SAFETY: Ensure buttons are enabled when entering screen
+        app = App.get_running_app()
+        
+        if "btn_take_medicine" in self.ids:
+            if app.can_take_medicine:
+                self.ids.btn_take_medicine.disabled = False
+                self.ids.btn_take_medicine.background_color = (0.2, 0.7, 0.5, 1) 
+            else:
+                self.ids.btn_take_medicine.disabled = True
+                self.ids.btn_take_medicine.background_color = (0.3, 0.3, 0.3, 1) 
+
         self.ids.btn_scan.disabled = False
         self._set_exit_buttons_state(disabled=False)
-       
+        
         if self.has_unsaved_data:
-            # Restore the "Green" Record Button
             self.ids.btn_scan.text = "RECORD\nREADING"
-            self.ids.btn_scan.background_color = (0.1, 0.7, 0.2, 1) # Green
-           
+            self.ids.btn_scan.background_color = (0.1, 0.7, 0.2, 1) 
             self.ids.vitals_status.text = "DATA RESTORED - RECORD TO SAVE"
             self.ids.vitals_status.color = (0, 0.7, 0, 1)
-           
-            # Restore numbers
             self.update_labels(self.bp_sys, self.bp_dia, self.bp_bpm, 0)
-           
         else:
-            # Standard Reset
             self.is_monitoring = False
-            self.ids.vitals_status.text = "STANDBY - PRESS START"
-            self.ids.vitals_status.color = (0.5, 0.5, 0.5, 1)
-           
+            
+            if app.medication_pending and not app.can_take_medicine:
+                self.ids.vitals_status.text = "TAKE BP FIRST TO UNLOCK MEDICINE"
+                self.ids.vitals_status.color = (0.9, 0.6, 0.1, 1) 
+            else:
+                self.ids.vitals_status.text = "STANDBY - PRESS START"
+                self.ids.vitals_status.color = (0.5, 0.5, 0.5, 1)
+                
             self.ids.btn_scan.text = "START\nMONITORING"
-            self.ids.btn_scan.background_color = (0.2, 0.6, 1, 1) # Blue
-           
+            self.ids.btn_scan.background_color = (0.2, 0.6, 1, 1) 
             self.ids.vitals_temp.text = "-SYSTOLIC-"
             self.ids.vitals_dia.text = "-DIASTOLIC-"
             self.ids.vitals_bpm.text = "-HEART RATE-"
             self.ids.classification.text = "----"
             self.ids.classification.color = (0, 0, 0, 1)
 
-
         threading.Thread(target=self.read_arduino_data, daemon=True).start()
-
 
     def on_leave(self):
         self.stop_thread = True
         self.is_monitoring = False
-       
-        # Close connection silently (No STOP command sent to Arduino)
         if self.ser and self.ser.is_open:
             self.ser.close()
-
+        
+        if self.auto_action_event:
+            self.auto_action_event.cancel()
+            self.auto_action_event = None
 
     def _set_exit_buttons_state(self, disabled):
-        """
-        Helper to visually fade the exit button.
-        Targeting 'btn_back' from your KV file.
-        """
         opacity = 0.3 if disabled else 1.0
-       
         if "btn_back" in self.ids:
             self.ids.btn_back.disabled = disabled
             self.ids.btn_back.opacity = opacity
 
-
     def go_back_menu(self):
-        # BLOCK EXIT WHILE MONITORING
         if self.is_monitoring:
             return
-
-
         if time.time() - self._last_click < 0.05: return
         self._last_click = time.time()
         self.manager.current = "menu"
-
 
     def toggle_monitoring(self):
         if time.time() - self._last_click < 0.3: return
         self._last_click = time.time()
 
-
-        # Disable main button for 3 seconds
         self.ids.btn_scan.disabled = True
         Clock.schedule_once(self.enable_button, 3)
-
 
         if self.has_unsaved_data:
             self.save_reading()
             return
-
 
         if self.is_monitoring:
             self.stop_scanning_manual()
         else:
             self.start_scanning()
 
-
     def enable_button(self, dt):
-        """ Re-enables the button after the 3-second timer """
         self.ids.btn_scan.disabled = False
 
-
     def start_scanning(self):
+        if self.auto_action_event:
+            self.auto_action_event.cancel()
+            self.auto_action_event = None
+
         self.is_monitoring = True
         self.has_unsaved_data = False
-       
-        # --- DISABLE EXIT BUTTON (FADE OUT) ---
         self._set_exit_buttons_state(disabled=True)
-       
+        
         self.ids.btn_scan.text = "STOP\nMONITORING"
-        self.ids.btn_scan.background_color = (0.8, 0.3, 0.3, 1) # Red
-       
+        self.ids.btn_scan.background_color = (0.8, 0.3, 0.3, 1)
         self.ids.vitals_status.text = "SCANNING..."
         self.ids.vitals_status.color = (0, 0.7, 0, 1)
-       
         self.ids.vitals_temp.text = "-SYSTOLIC-"
         self.ids.vitals_dia.text = "-DIASTOLIC-"
         self.ids.vitals_bpm.text = "-HEART RATE-"
         self.ids.classification.text = "----"
-       
+        
         if self.ser and self.ser.is_open:
             try: self.ser.write(b"START\n")
             except Exception as e: print(f"Serial Write Error: {e}")
 
-
     def stop_scanning_manual(self):
+        if self.auto_action_event:
+            self.auto_action_event.cancel()
+            self.auto_action_event = None
+
         self.is_monitoring = False
         self.has_unsaved_data = False
-       
-        # --- ENABLE EXIT BUTTON (RESTORE OPACITY) ---
         self._set_exit_buttons_state(disabled=False)
-       
+        
         if self.ser and self.ser.is_open:
             try: self.ser.write(b"STOP\n")
             except Exception as e: print(f"Serial Write Error: {e}")
-           
+            
         self.ids.btn_scan.text = "START\nMONITORING"
-        self.ids.btn_scan.background_color = (0.2, 0.6, 1, 1) # Blue
-       
-        self.ids.vitals_status.text = "STANDBY - ABORTED"
-        self.ids.vitals_status.color = (0.5, 0.5, 0.5, 1)
+        self.ids.btn_scan.background_color = (0.2, 0.6, 1, 1)
+        
+        app = App.get_running_app()
+        if app.medication_pending and not app.can_take_medicine:
+            self.ids.vitals_status.text = "TAKE BP FIRST TO UNLOCK MEDICINE"
+            self.ids.vitals_status.color = (0.9, 0.6, 0.1, 1)
+        else:
+            self.ids.vitals_status.text = "STANDBY - ABORTED"
+            self.ids.vitals_status.color = (0.5, 0.5, 0.5, 1)
 
-
+    def trigger_auto_action(self, dt):
+        app = App.get_running_app()
+        if self.has_unsaved_data:
+            self.save_reading()
+        
+        if app.medication_pending and app.can_take_medicine:
+            Clock.schedule_once(lambda x: app.take_medicine_action(), 1.5)
+    
     def transition_to_record_mode(self, dt):
-        """ Called automatically when values arrive """
         self.is_monitoring = False
         self.has_unsaved_data = True
-       
-        # --- ENABLE EXIT BUTTON (User can leave now if they want) ---
         self._set_exit_buttons_state(disabled=False)
-       
-        # Stop Arduino when values arrive
-        # if self.ser and self.ser.is_open:
-            # try: self.ser.write(b"STOP\n")
-            # except: pass
-
-
+        
         self.ids.btn_scan.text = "RECORD\nREADING"
-        self.ids.btn_scan.background_color = (0.1, 0.7, 0.2, 1) # Green
-       
-        self.ids.vitals_status.text = "SCAN COMPLETE - PRESS RECORD"
-        self.ids.vitals_status.color = (0, 0.7, 0, 1)
+        self.ids.btn_scan.background_color = (0.1, 0.7, 0.2, 1)
+        
+        app = App.get_running_app()
+        
+        if app.medication_pending:
+            self.ids.vitals_status.text = "BP ACQUIRED - AUTO DISPENSE IN 10S"
+            self.ids.vitals_status.color = (0.2, 0.7, 0.5, 1)
+            app.check_and_unlock_medicine()
+        else:
+            self.ids.vitals_status.text = "SCAN COMPLETE - AUTO RECORD IN 10S"
+            self.ids.vitals_status.color = (0, 0.7, 0, 1)
 
+        if self.auto_action_event:
+            self.auto_action_event.cancel()
+        self.auto_action_event = Clock.schedule_once(self.trigger_auto_action, 10.0)
 
     def read_arduino_data(self):
         try:
             self.ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
             time.sleep(2)
-
 
             while not self.stop_thread:
                 if self.ser.in_waiting > 0:
@@ -1055,10 +918,8 @@ class VitalSignsScreen(Screen):
                         pass
                 time.sleep(0.1)
 
-
         except Exception as e:
             Clock.schedule_once(partial(self.update_labels, "Err", "Err", "Err"), 0)
-
 
     def update_labels(self, temp_val, temp_dia, temp_bpm, dt):
         if temp_val == "Err" or temp_dia == "Err" or temp_bpm == "Err":
@@ -1069,7 +930,7 @@ class VitalSignsScreen(Screen):
             self.ids.vitals_temp.text = f"{temp_val}"
             self.ids.vitals_dia.text = f"{temp_dia}"
             self.ids.vitals_bpm.text = f"{temp_bpm}"
-           
+            
             try:
                 sys = int(temp_val)
                 dia = int(temp_dia)
@@ -1094,15 +955,23 @@ class VitalSignsScreen(Screen):
                 elif sys > 140 and dia < 90:
                     self.ids.classification.text = "Isolated Systolic Hypertension"
                     self.ids.classification.color = (0.8, 0.3, 0.3, 1)
+                elif sys < 0:
+                    self.ids.classification.text = "Error. Try Again"
+                    self.ids.classification.color = (0.8, 0.3, 0.3, 1)
+                    self.ids.vitals_temp.text = "Error"
+                    self.ids.vitals_dia.text = "Error"
+                    self.ids.vitals_bpm.text = "Error"
             except ValueError:
                 pass
-
 
             if self.is_monitoring:
                 Clock.schedule_once(self.transition_to_record_mode, 0.2)
 
-
     def save_reading(self):
+        if self.auto_action_event:
+            self.auto_action_event.cancel()
+            self.auto_action_event = None
+
         if self.ids.vitals_temp.text == "Error" or self.ids.vitals_temp.text == "-SYSTOLIC-":
             self.ids.vitals_status.text = "ERROR: NO DATA TO SAVE"
             self.ids.vitals_status.color = (1, 0, 0, 1)
@@ -1110,48 +979,50 @@ class VitalSignsScreen(Screen):
             self.has_unsaved_data = False
             return
 
-
-        # 1. Prepare Data
         temp_val = self.bp_sys
         dia_val = self.bp_dia
         bpm_val = self.bp_bpm
         now = datetime.now()        
         timestamp = now.strftime("%Y-%m-%d  %I:%M %p")
         entry = f"[{timestamp}]       Blood Pressure: {temp_val}/{dia_val}mmHg       Heart Rate:  {bpm_val}bpm"
-       
-        # 2. Save Data
+        
         app = App.get_running_app()
         app.saved_history.insert(0, entry)
-       
+        
         try:
             with open(LOG_FILE, "a") as f:
                 f.write(entry + "\n")
         except Exception as e:
-            print(f"Error saving to file: {e}")
+            pass
 
-
-        # 3. Send SMS/LoRa
         if self.ser and self.ser.is_open:
             try:
                 self.ser.write(b"SEND\n")
                 sms_cmd = f"SMS:{TARGET_PHONE_NUMBER}:{temp_val}/{dia_val} BP {bpm_val} BPM\n"
                 self.ser.write(sms_cmd.encode('utf-8'))
             except Exception as e:
-                print(f"Error sending Serial commands: {e}")
-
+                pass
 
         self.is_monitoring = False
         self.has_unsaved_data = False
 
-
-        self.ids.vitals_status.text = "SAVED! CONSULTING AI..."
-        self.ids.vitals_status.color = (0.07, 0.5, 0.17, 1)
         self.ids.btn_scan.text = "SAVED"
-       
-        Clock.schedule_once(partial(self.redirect_to_ai, temp_val, dia_val, bpm_val), 1.0)
         
-        send_vitals_to_dashboard(temp_val, dia_val, bpm_val)
+        if app.medication_pending:
+            self.ids.vitals_status.text = "SAVED! PLEASE TAKE YOUR MEDICINE."
+            self.ids.vitals_status.color = (0.9, 0.6, 0.1, 1)
+            send_vitals_to_dashboard(temp_val, dia_val, bpm_val, self.ids.classification.text)
+        else:
+            self.ids.vitals_status.text = "SAVED! CONSULTING AI..."
+            self.ids.vitals_status.color = (0.07, 0.5, 0.17, 1)
+            Clock.schedule_once(partial(self.redirect_to_ai, temp_val, dia_val, bpm_val), 1.0)
+            send_vitals_to_dashboard(temp_val, dia_val, bpm_val, self.ids.classification.text)
 
+    def return_to_standby_status(self, dt):
+        self.ids.vitals_status.text = "STANDBY - PRESS START"
+        self.ids.vitals_status.color = (0.5, 0.5, 0.5, 1)
+        self.ids.btn_scan.text = "START\nMONITORING"
+        self.ids.btn_scan.background_color = (0.2, 0.6, 1, 1)
 
     def redirect_to_ai(self, temp_val, dia_val, bpm_val, dt):
         self.manager.current = "chat"
@@ -1163,8 +1034,7 @@ class VitalSignsScreen(Screen):
 
 class HistoryRow(BoxLayout):
     text_content = StringProperty("")
-   
-   
+    
     def __init__(self, text_content="", **kwargs):
         super().__init__(**kwargs)
         self.text_content = text_content
@@ -1172,15 +1042,13 @@ class HistoryRow(BoxLayout):
 
 
 class HistoryScreen(Screen):
-    _last_click = 0 # New attribute for debounce logic
-
+    _last_click = 0 
 
     def on_enter(self):
         app = App.get_running_app()
         self.ids.history_grid.clear_widgets()
-       
+        
         if not app.saved_history:
-            # Show "No records" message if empty
             lbl = Label(
                 text="No patient records found.",
                 color=(0.5, 0.5, 0.5, 1),
@@ -1192,40 +1060,28 @@ class HistoryScreen(Screen):
             if "btn_clear_db" in self.ids: self.ids.btn_clear_db.disabled = True
             return
 
-
-
-
-        # Enable Clear DB button
         if "btn_clear_db" in self.ids: self.ids.btn_clear_db.disabled = False
-       
-        # Populate the grid with row widgets
+        
         for record in app.saved_history:
             row = HistoryRow(text_content=record)
             self.ids.history_grid.add_widget(row)
 
-
     def delete_record(self, row_widget):
         app = App.get_running_app()
         text_to_delete = row_widget.text_content
-       
-        # 1. Remove from RAM
+        
         if text_to_delete in app.saved_history:
             app.saved_history.remove(text_to_delete)
-           
-        # 2. Remove from UI
+            
         self.ids.history_grid.remove_widget(row_widget)
-       
-        # 3. Rewrite File (Overwrite with updated list)
+        
         try:
             with open(LOG_FILE, "w") as f:
-                # saved_history is Newest -> Oldest
-                # File needs Oldest -> Newest (to append correctly later)
                 for line in reversed(app.saved_history):
                     f.write(line + "\n")
         except Exception as e:
-            print(f"Error updating file: {e}")
-           
-        # 4. Handle Empty State
+            pass
+            
         if not app.saved_history:
             lbl = Label(
                 text="No patient records found.",
@@ -1237,26 +1093,18 @@ class HistoryScreen(Screen):
             self.ids.history_grid.add_widget(lbl)
             if "btn_clear_db" in self.ids: self.ids.btn_clear_db.disabled = True
 
-
     def clear_history(self):
-        # Debounce to prevent accidental double clicks (1 second wait)
         if time.time() - self._last_click < 1.0: return
         self._last_click = time.time()
 
-
-
-
         app = App.get_running_app()
         if not app.saved_history: return
-
-
-
 
         content = Factory.ConfirmPopup()
         content.ids.confirm_msg.text = "Are you sure you want to\ndelete ALL patient logs?"
         content.ids.confirm_button.text = "YES, DELETE ALL"
         content.ids.confirm_button.background_color = (0.8, 0, 0, 1)
-       
+        
         self.popup = Popup(
             title="CONFIRM DELETION",
             content=content,
@@ -1269,25 +1117,18 @@ class HistoryScreen(Screen):
         content.ids.confirm_button.bind(on_release=self.execute_clear_history)
         self.popup.open()
 
-
     def execute_clear_history(self, instance):
         self.popup.dismiss()
         app = App.get_running_app()
-       
-        # 1. Clear RAM
+        
         app.saved_history.clear()
-       
-        # 2. Clear File
+        
         try:
             with open(LOG_FILE, "w") as f:
                 f.write("")
         except Exception:
             pass
 
-
-
-
-        # 3. Clear Widgets and show empty message
         self.ids.history_grid.clear_widgets()
         lbl = Label(
             text="No patient records found.",
@@ -1297,7 +1138,7 @@ class HistoryScreen(Screen):
             font_size="16sp"
         )
         self.ids.history_grid.add_widget(lbl)
-       
+        
         if "btn_clear_db" in self.ids:
             self.ids.btn_clear_db.disabled = True
 
@@ -1305,16 +1146,15 @@ class HistoryScreen(Screen):
 
 class WindowManager(ScreenManager):
     pass
-   
-   
-   
+    
+    
+    
 class ChatScreen(Screen):
-    # Attributes for keyboard logic
     debounce_active = False
     caps_enabled = False
     shift_enabled = False
     keyboard_page = 0
-    _last_key_down = None # Track last key name
+    _last_key_down = None 
     _last_key_time = 0.0
     shift_button = None
     caps_button = None
@@ -1324,27 +1164,18 @@ class ChatScreen(Screen):
 
 
     def on_enter(self):
-        # 1. Clear previous chat widgets to prevent duplicates if returning
         self.ids.messages_layout.clear_widgets()
-       
-        # 2. Init Keyboard & Styling
         self.build_keyboard()
         Clock.schedule_once(self.force_input_style, 0.1)
-       
-        # 3. Load History
         self.load_saved_messages()
-       
-        # 4. Greeting if empty
+        
         app = App.get_running_app()
         if not app.chat_history:
             self.add_medical_greeting()
-       
-        # 5. Check Online Status (NEW)
+        
         self.check_online_status()
 
-
     def on_leave(self):
-        # Stop background events when leaving screen
         if self.thinking_event:
             self.thinking_event.cancel()
             self.thinking_event = None
@@ -1352,25 +1183,21 @@ class ChatScreen(Screen):
             self.type_event.cancel()
             self.type_event = None
 
-
     def check_online_status(self):
         if "ai_status_label" in self.ids:
             self.ids.ai_status_label.text = "Checking connection..."
         threading.Thread(target=self._check_wifi_thread, daemon=True).start()
 
-
     def _check_wifi_thread(self):
         is_connected = False
         try:
             if platform.system() == "Windows":
-                 # Windows check
                  try:
                     output = subprocess.check_output("netsh wlan show interfaces", shell=True, timeout=2).decode(errors='ignore')
                     if "State" in output and "connected" in output:
                         is_connected = True
                  except: pass
             else:
-                # Linux check
                 try:
                     output = subprocess.check_output(["sudo", "/usr/bin/nmcli", "-t", "-f", "DEVICE,STATE", "dev"], timeout=2).decode('utf-8', errors='ignore')
                     for line in output.splitlines():
@@ -1382,7 +1209,6 @@ class ChatScreen(Screen):
         except: pass
         Clock.schedule_once(partial(self._update_status_label, is_connected), 0)
 
-
     def _update_status_label(self, is_connected, dt):
         lbl = self.ids.get("ai_status_label")
         if lbl:
@@ -1393,33 +1219,28 @@ class ChatScreen(Screen):
                 lbl.text = "OFFLINE • Wi-Fi Disconnected"
                 lbl.color = (0.8, 0.3, 0.3, 1)
 
-
     def force_input_style(self, dt):
         ti = getattr(self.ids, "input_field", None)
         if ti:
-            ti.foreground_color = (0, 0, 0, 1) # Force Black Text
-            ti.cursor_color = (0, 0, 0, 1)     # Force Black Cursor
+            ti.foreground_color = (0, 0, 0, 1) 
+            ti.cursor_color = (0, 0, 0, 1)      
             ti.padding = [10, 4, 10, 4]      
             ti.font_size = "14sp"
             ti.background_normal = ''
             ti.background_active = ''
             ti.background_color = (0, 0, 0, 0)
 
-
     def add_medical_greeting(self):
         greeting = "Hello. I am Kairos.\nHow can I help you check your vitals today?"
         self.add_assistant_bubble_static(greeting)
-
 
     def clear_chat_history(self):
         self.ids.messages_layout.clear_widgets()
         App.get_running_app().clear_chat_data()
         self.add_medical_greeting()
-   
-   
+    
     def go_back_menu(self):
         self.manager.current = "menu"
-
 
     def _create_label_for_bubble(self, bubble, text, color=(0, 0, 0, 1)):
         from kivy.uix.label import Label
@@ -1432,7 +1253,6 @@ class ChatScreen(Screen):
         lbl.bind(height=lambda inst, h: setattr(bubble, 'height', h + 25))
         return lbl
 
-
     def load_saved_messages(self):
         app = App.get_running_app()
         for msg in app.chat_history:
@@ -1441,19 +1261,17 @@ class ChatScreen(Screen):
             else:
                 self.add_assistant_bubble_static(msg['text'])
 
-
     def add_assistant_bubble_static(self, text):
         from kivy.factory import Factory
         try: bubble = Factory.ChatBubble()
         except Exception:
             from kivy.uix.boxlayout import BoxLayout
             bubble = BoxLayout(size_hint_y=None, padding=10)
-       
+        
         lbl = self._create_label_for_bubble(bubble, text, color=(0.2, 0.2, 0.2, 1))
         bubble.add_widget(lbl)
         self.ids.messages_layout.add_widget(bubble)
         Clock.schedule_once(lambda dt: self.scroll_to_bottom(), 0.02)
-
 
     def add_user_message(self, text, save=True):
         from kivy.factory import Factory
@@ -1461,16 +1279,15 @@ class ChatScreen(Screen):
         except Exception:
             from kivy.uix.boxlayout import BoxLayout
             bubble = BoxLayout(size_hint_y=None, padding=10)
-       
+        
         display_text = f"{text}"
         lbl = self._create_label_for_bubble(bubble, display_text, color=(0.1, 0.2, 0.4, 1))
         bubble.add_widget(lbl)
         self.ids.messages_layout.add_widget(bubble)
         Clock.schedule_once(lambda dt: self.scroll_to_bottom(), 0.02)
-       
+        
         if save:
             App.get_running_app().save_chat_message("user", text)
-
 
     def add_assistant_placeholder(self):
         from kivy.factory import Factory
@@ -1478,39 +1295,35 @@ class ChatScreen(Screen):
         except Exception:
             from kivy.uix.boxlayout import BoxLayout
             bubble = BoxLayout(size_hint_y=None, padding=10)
-       
+        
         lbl = self._create_label_for_bubble(bubble, "Analyzing input.", color=(0.4, 0.4, 0.4, 1))
         bubble.add_widget(lbl)
         self.ids.messages_layout.add_widget(bubble)
         Clock.schedule_once(lambda dt: self.scroll_to_bottom(), 0.02)
         return bubble, lbl
 
-
     def send_message(self):
         prompt = getattr(self.ids, "input_field", None)
         if not prompt or not prompt.text.strip():
             return
-           
+            
         text = prompt.text.strip()
         self.trigger_automated_query(text)
         prompt.text = ""
 
-
     def trigger_automated_query(self, text):
-        """ Handles both user typed messages and automated system queries """
         self.add_user_message(text, save=True)
-       
+        
         self.assistant_bubble, self.assistant_label = self.add_assistant_placeholder()
-       
+        
         self.is_thinking = True
         self.thinking_dots = 0
         self.current_ai_text_accumulator = ""
-       
+        
         if self.thinking_event: self.thinking_event.cancel()
         self.thinking_event = Clock.schedule_interval(self._thinking_step, 0.5)
-       
+        
         threading.Thread(target=self._query_ollama, args=(text,), daemon=True).start()
-
 
     def _thinking_step(self, dt):
         self.thinking_dots = (self.thinking_dots + 1) % 4
@@ -1520,11 +1333,10 @@ class ChatScreen(Screen):
         Clock.schedule_once(lambda dt: self.scroll_to_bottom(), 0)
         return True
 
-
     def _query_ollama(self, prompt):
         medical_prompt = f"You are a helpful AI Assistant. Your name is Kairos. Answer concisely and professionally. User asks: {prompt}"
         payload = {"model": MODEL, "prompt": medical_prompt, "stream": True}
-       
+        
         try:
             with requests.post(OLLAMA_URL, json=payload, stream=True, timeout=60) as resp:
                 if resp.status_code == 200:
@@ -1534,55 +1346,44 @@ class ChatScreen(Screen):
                                 body = json.loads(line.decode('utf-8'))
                                 token = body.get("response", "")
                                 done = body.get("done", False)
-                               
+                                
                                 if token:
                                     Clock.schedule_once(partial(self._process_stream_chunk, token, False), 0)
-                               
+                                
                                 if done:
                                     Clock.schedule_once(partial(self._process_stream_chunk, "", True), 0)
                                     break
                             except Exception as e:
-                                print(f"JSON Parse Error: {e}")
+                                pass
                 else:
                     err_msg = f"System Error: {resp.status_code}"
                     Clock.schedule_once(partial(self._process_stream_chunk, err_msg, True), 0)
 
-
-
-
         except Exception as e:
             err_msg = f"Network Error. Please check connection."
             Clock.schedule_once(partial(self._process_stream_chunk, err_msg, True), 0)
-
 
     def _process_stream_chunk(self, token, is_done, dt):
         if self.is_thinking:
             if self.thinking_event:
                 self.thinking_event.cancel()
                 self.thinking_event = None
-           
             self.assistant_label.text = ""
             self.is_thinking = False
 
-
-
-
         self.assistant_label.text += token
         self.current_ai_text_accumulator += token
-       
+        
         Clock.schedule_once(lambda dt: self.scroll_to_bottom(), 0)
-       
+        
         if is_done:
             clean_text = self.current_ai_text_accumulator
             App.get_running_app().save_chat_message("assistant", clean_text)
 
-
     def scroll_to_bottom(self):
         sv = getattr(self.ids, "messages_scroll", None)
-        layout = getattr(self.ids, "messages_layout", None)
-        if sv and layout and layout.children:
-            sv.scroll_to(layout.children[0])
-
+        if sv:
+            sv.scroll_y = 0
 
     def build_keyboard(self, dt=None):
         layout = getattr(self.ids, "keyboard_layout", None)
@@ -1590,7 +1391,7 @@ class ChatScreen(Screen):
         layout.clear_widgets()
         self.shift_button = None
         self.caps_button = None
-       
+        
         if self.keyboard_page == 0:
             rows = [
                 ["q","w","e","r","t","y","u","i","o","p"],
@@ -1605,8 +1406,8 @@ class ChatScreen(Screen):
                 [".",",","?","!","'","\"","+","=","_","*"],
                 ["MAIN","CLEAR","SPACE","BACK"]
             ]
-       
-        key_bg = (0.9, 0.9, 0.9, 1) # UPDATED: Matches WifiScreen (was 0.95)
+        
+        key_bg = (0.9, 0.9, 0.9, 1) 
         for row_keys in rows:
             row = BoxLayout(spacing=4, padding=(2,0))
             for key in row_keys:
@@ -1615,24 +1416,18 @@ class ChatScreen(Screen):
                 is_capitalized = self.caps_enabled or self.shift_enabled
                 if self.keyboard_page == 0 and key.isalpha():
                     display_text = key.upper() if is_capitalized else key.lower()
-               
+                
                 if key == "SHIFT":
                     if self.shift_enabled: current_bg = [0.0, 0.6, 0.6, 1]
                 elif key == "CAPS":
                     if self.caps_enabled: current_bg = [0.0, 0.6, 0.6, 1]
 
-
-
-
                 w_hint = 1.0
                 if key == "SPACE": w_hint = 2.5
                 elif key in ["SHIFT", "CAPS", "MORE", "MAIN", "BACK", "CLEAR"]: w_hint = 1.3
-               
+                
                 text_col = (0.2, 0.2, 0.2, 1)
                 if current_bg[0] < 0.5: text_col = (1,1,1,1)
-
-
-
 
                 btn = Button(
                     text=display_text, font_size=12, size_hint_x=w_hint,
@@ -1644,50 +1439,46 @@ class ChatScreen(Screen):
                 if key=="CAPS": self.caps_button = btn
             layout.add_widget(row)
 
-
     def on_key_press(self, key_name, instance, *args):
         now = time.time()
-        debounce_active = False
-       
+        
         if self.debounce_active:
             return
         self.debounce_active = True
         Clock.schedule_once(self.enable_button, 0.2)
-       
+        
         self._last_key_down = key_name
         self._last_key_time = now
-       
+        
         orig_color = instance.background_color
         instance.background_color = (0.0, 0.8, 0.8, 1)
         if key_name not in ["SHIFT", "CAPS"] or not (self.shift_enabled or self.caps_enabled):
              Clock.schedule_once(lambda dt: setattr(instance, 'background_color', orig_color), 0.1)
-       
+        
         key = key_name
         ti = getattr(self.ids, "input_field", None)
         if not ti: return
-           
+            
         if key=="SPACE": ti.text+=" "; return
         if key=="BACK": ti.text=ti.text[:-1]; return
         if key=="CLEAR": ti.text=""; return
         if key=="CAPS":
             self.caps_enabled = not self.caps_enabled
-            self.build_keyboard() # UPDATED: Direct call
+            self.build_keyboard() 
             return
         if key=="SHIFT":
             self.shift_enabled = not self.shift_enabled
-            self.build_keyboard() # UPDATED: Direct call
+            self.build_keyboard() 
             return
         if key=="MORE": self.keyboard_page=1; self.build_keyboard(); return
         if key=="MAIN": self.keyboard_page=0; self.build_keyboard(); return
-       
+        
         if len(key) == 1:
-            is_capitalized = (self.caps_enabled or self.shift_enabled) and self.keyboard_page == 0
             ch = instance.text if key.isalpha() else key
             ti.text += ch
             if self.shift_enabled and not self.caps_enabled:
                 self.shift_enabled = False
-                self.build_keyboard() # UPDATED: Direct call
-
+                self.build_keyboard() 
 
     def enable_button(self, dt):
         self.debounce_active = False
@@ -1702,21 +1493,23 @@ class SettingsScreen(Screen):
         self._last_click = time.time()
         self.manager.current = "menu"
 
-
     def open_alarm_settings(self):
         if time.time() - self._last_click < 0.2: return
         self._last_click = time.time()
-        self.manager.current = "alarm"  # <--- Update this line
-
+        self.manager.current = "alarm"  
 
     def open_datetime_settings(self):
-        # Debounce to prevent double opening
         if time.time() - self._last_click < 0.2: return
         self._last_click = time.time()
         self.manager.current = "datetime"
 
 
 
+class PillManagementScreen(Screen):
+    pass
+    
+    
+    
 class DateTimeScreen(Screen):
     display_hour = StringProperty("12")
     display_minute = StringProperty("00")
@@ -1724,12 +1517,9 @@ class DateTimeScreen(Screen):
     display_month = StringProperty("01")
     display_day = StringProperty("01")
     display_year = StringProperty("2025")
-    
-    # Track the last click time
     _last_click = 0
 
     def on_enter(self):
-        # Update the time display variables
         now = datetime.now()
         self.display_hour = now.strftime("%I")
         self.display_minute = now.strftime("%M")
@@ -1739,7 +1529,6 @@ class DateTimeScreen(Screen):
         self.display_year = now.strftime("%Y")
 
     def adjust_time(self, field, amount):
-        # --- DEBOUNCE FIX ---
         if time.time() - self._last_click < 0.05:
             return
         self._last_click = time.time()
@@ -1749,34 +1538,28 @@ class DateTimeScreen(Screen):
             if val > 12: val = 1
             if val < 1: val = 12
             self.display_hour = f"{val:02d}"
-            
         elif field == "minute":
             val = int(self.display_minute) + amount
             if val > 59: val = 0
             if val < 0: val = 59
             self.display_minute = f"{val:02d}"
-
         elif field == "ampm":
             self.display_ampm = "PM" if self.display_ampm == "AM" else "AM"
-
         elif field == "month":
             val = int(self.display_month) + amount
             if val > 12: val = 1
             if val < 1: val = 12
             self.display_month = f"{val:02d}"
-
         elif field == "day":
             val = int(self.display_day) + amount
             if val > 31: val = 1
             if val < 1: val = 31
             self.display_day = f"{val:02d}"
-
         elif field == "year":
             val = int(self.display_year) + amount
             self.display_year = str(val)
 
     def save_datetime(self):
-        # Longer debounce for the save button (0.5s)
         if time.time() - self._last_click < 0.5: return
         self._last_click = time.time()
 
@@ -1813,7 +1596,6 @@ class AddAlarmPopup(BoxLayout):
     _last_click = 0
 
     def adjust_time(self, field, amount):
-        # 0.05s debounce to filter out "ghost" double-clicks from hardware
         if time.time() - self._last_click < 0.05: 
             return
         self._last_click = time.time()
@@ -1824,15 +1606,12 @@ class AddAlarmPopup(BoxLayout):
             if val > 12: val = 1
             if val < 1: val = 12
             lbl.text = f"{val:02d}"
-
         elif field == "minute":
             lbl = self.ids.lbl_minute
             val = int(lbl.text) + amount
             if val > 59: val = 0
             if val < 0: val = 59
             lbl.text = f"{val:02d}"
-
-        # --- ADDED AM/PM DEBOUNCE LOGIC ---
         elif field == "ampm":
             lbl = self.ids.lbl_ampm
             lbl.text = "PM" if lbl.text == "AM" else "AM"
@@ -1842,19 +1621,17 @@ class AddAlarmPopup(BoxLayout):
 class AlarmScreen(Screen):
     alarm_list = []
     _last_click = 0
-    is_processing = False  # The Safety Lock
+    is_processing = False 
 
     def on_enter(self):
-        self.is_processing = False # Reset lock
+        self.is_processing = False 
         self.load_alarms()
         self.render_alarms()
-
 
     def go_back_settings(self):
         if time.time() - self._last_click < 0.1: return
         self._last_click = time.time()
         self.manager.current = "settings"
-
 
     def load_alarms(self):
         if os.path.exists(ALARM_FILE):
@@ -1866,14 +1643,12 @@ class AlarmScreen(Screen):
         else:
             self.alarm_list = []
 
-
     def save_alarms(self):
         try:
             with open(ALARM_FILE, "w") as f:
                 json.dump(self.alarm_list, f, indent=4)
         except Exception as e:
             print(f"Error saving alarms: {e}")
-
 
     def render_alarms(self):
         grid = self.ids.alarm_grid
@@ -1912,7 +1687,6 @@ class AlarmScreen(Screen):
             row.add_widget(del_btn)
             grid.add_widget(row)
 
-
     def delete_alarm(self, index, instance):
         if time.time() - self._last_click < 0.2: return
         self._last_click = time.time()
@@ -1922,12 +1696,11 @@ class AlarmScreen(Screen):
             self.save_alarms()
             self.render_alarms()
 
-
     def show_add_alarm_popup(self):
         if time.time() - self._last_click < 0.3: return
         self._last_click = time.time()
         
-        self.is_processing = False # Ensure lock is open
+        self.is_processing = False 
         content = AddAlarmPopup()
         self._popup = Popup(
             title="SET CLINICAL SCHEDULE",
@@ -1935,29 +1708,19 @@ class AlarmScreen(Screen):
             size_hint=(0.9, 1),
             auto_dismiss=False
         )
-        
         content.ids.btn_cancel.bind(on_release=self._popup.dismiss)
-        
-        # --- THE FIX: Bind the save function here ---
         content.ids.btn_save.bind(on_release=self.execute_one_shot_save)
-        
         self._popup.open()
 
-
     def execute_one_shot_save(self, instance):
-        """ This function is now a 'One-Shot' killer for duplicates """
-        
-        # 1. IMMEDIATE LOCK: Check if we are already processing
         if self.is_processing:
             return
         self.is_processing = True
 
-        # 2. PHYSICAL UNBIND: Tell the button to forget this function immediately
         instance.unbind(on_release=self.execute_one_shot_save)
         instance.disabled = True
         instance.text = "SAVING..."
 
-        # 3. COLLECT DATA
         content = self._popup.content
         h = content.ids.lbl_hour.text
         m = content.ids.lbl_minute.text
@@ -1965,7 +1728,6 @@ class AlarmScreen(Screen):
         
         time_str = f"{h}:{m} {p}"
         
-        # 4. SAVE AND REFRESH
         self.alarm_list.append({
             "time": time_str, 
             "active": True,
@@ -1974,41 +1736,50 @@ class AlarmScreen(Screen):
         
         self.save_alarms()
         self.render_alarms()
-        
-        # 5. CLOSE POPUP
         self._popup.dismiss()
 
 
-
 class PagtultolApp(App):
-    # --- SYSTEM VARIABLES ---
     saved_history = []
     chat_history = []
     _last_click_time = 0.0
     _is_warning_open = False
-    
-    # Track the last alert so we don't spam the user
     last_triggered_time = "" 
     buzzer_event = None
     buzzer_state = False
     _alert_popup = None
-    pill_count = NumericProperty(8) 
+    auto_dismiss_event = None 
+    pill_count = NumericProperty(1) 
+    medication_pending = BooleanProperty(False) 
     can_take_medicine = BooleanProperty(False) 
+    arduino_serial = None
+
+    def load_inventory(self):
+        if os.path.exists(INVENTORY_FILE):
+            try:
+                with open(INVENTORY_FILE, "r") as f:
+                    data = json.load(f)
+                    self.pill_count = data.get("pill_count", 1)
+            except Exception as e:
+                print(f"Error loading inventory: {e}")
+
+    def save_inventory(self):
+        try:
+            with open(INVENTORY_FILE, "w") as f:
+                json.dump({"pill_count": self.pill_count}, f)
+        except Exception as e:
+            print(f"Error saving inventory: {e}")
 
     def check_debounce(self, wait_time=0.5):
-        """
-        Acts as a lock. Returns True if enough time has passed (0.5 seconds),
-        allowing the action to proceed. Returns False if clicked too fast.
-        """
         current_time = time.time()
         if current_time - self._last_click_time < wait_time:
-            return False # Block the action
+            return False 
         self._last_click_time = current_time
-        return True # Allow the action
-
+        return True 
 
     def build(self):
-        # 1. Load Patient Logs
+        self.load_inventory() 
+
         if os.path.exists(LOG_FILE):
             try:
                 with open(LOG_FILE, "r") as f:
@@ -2017,7 +1788,6 @@ class PagtultolApp(App):
             except Exception as e:
                 print(f"Error loading logs: {e}")
 
-        # 2. Load Chat History
         if os.path.exists(CHAT_FILE):
             try:
                 with open(CHAT_FILE, "r") as f:
@@ -2025,534 +1795,255 @@ class PagtultolApp(App):
             except Exception as e:
                 self.chat_history = []
 
-        # 3. Setup Screen Manager
         sm = WindowManager(transition=FadeTransition(duration=0.1))
         return sm 
 
-
     def manual_decrement(self):
-        """Subtracts 1 pill manually from the configuration screen."""
         if not self.check_debounce(): return 
         if self.pill_count > 0:
             self.pill_count -= 1
+            self.save_inventory()
             print(f"Manual adjust: Pills remaining: {self.pill_count}")
-
 
     def manual_increment(self):
-        """Adds exactly 1 pill to the software inventory, up to a max of 8."""
         if not self.check_debounce(): return 
-        if self.pill_count < 8:
+        if self.pill_count < 7:
             self.pill_count += 1
-            print(f"Manual adjust: Pills remaining: {self.pill_count}")
-        else:
-            print("Dispenser is already at maximum capacity (8/8).")
-
-        """Subtracts 1 pill manually from the configuration screen."""
-        if not self.check_debounce(): return # Debounce lock
-        
-        if self.pill_count > 0:
-            self.pill_count -= 1
+            self.save_inventory()
             print(f"Manual adjust: Pills remaining: {self.pill_count}")
 
-
-    def refill_pills(self):
-        """Sets the pill count to the maximum of 8."""
-        if not self.check_debounce(): return # Debounce lock
-        
-        self.pill_count = 8
-        print("Pills refilled to 8.")
+    def restock_inventory(self):
+        if self.check_debounce():
+            self.pill_count = 7
+            self.save_inventory()
+            print("Inventory Restocked to 7.")
 
     @mainthread
     def unlock_medicine_button(self):
-        """Directly targets the button by ID and forces it to unlock."""
-        self.can_take_medicine = True
-        
-        # 1. Locate the Vitals screen in the ScreenManager
+        self.medication_pending = True
+        self.can_take_medicine = False
         if self.root and self.root.has_screen('vitals'):
             vitals_screen = self.root.get_screen('vitals')
-            
-            # 2. Grab the specific button by its ID and force it ON
             if 'btn_take_medicine' in vitals_screen.ids:
                 med_btn = vitals_screen.ids.btn_take_medicine
-                med_btn.disabled = False
-                med_btn.background_color = (0.2, 0.7, 0.5, 1) # Turn Medical Green
-                print("SYSTEM OVERRIDE: Button forcefully unlocked via ID.")
-            else:
-                print("ERROR: Could not find 'btn_take_medicine' ID.")
+                med_btn.disabled = True
+                med_btn.background_color = (0.3, 0.3, 0.3, 1) 
 
-
-    def take_medicine_action(self):
-        """Checks inventory, dispenses, and forces the button to lock again."""
-        if not self.check_debounce(): return 
-        
-        if not self.can_take_medicine:
-            print("Action blocked: No active medication schedule.")
-            return
-
-        if self.pill_count > 0:
-            self.pill_count -= 1
-            
-            # Lock the internal logic
-            self.can_take_medicine = False 
-            
-            # 3. Locate the button again and force it OFF
+    @mainthread
+    def check_and_unlock_medicine(self):
+        if self.medication_pending:
+            self.can_take_medicine = True
             if self.root and self.root.has_screen('vitals'):
                 vitals_screen = self.root.get_screen('vitals')
                 if 'btn_take_medicine' in vitals_screen.ids:
                     med_btn = vitals_screen.ids.btn_take_medicine
-                    med_btn.disabled = True
-                    med_btn.background_color = (0.3, 0.3, 0.3, 1) # Turn Gray
-            
-            print(f"Medicine dispensed. Pills remaining: {self.pill_count}")
-            self.send_rotate_command() 
-        else:
-            print("Cannot dispense: No pills left!")
-            self.show_empty_dispenser_warning()
+                    med_btn.disabled = False
+                    med_btn.background_color = (0.2, 0.7, 0.5, 1) 
 
-
-
-        """Checks inventory and authorization before dispensing."""
-        if not self.check_debounce(): return 
-        
-        if not self.can_take_medicine:
-            print("Action blocked: No active medication schedule.")
+    def take_medicine_action(self):
+        if not self.check_debounce(wait_time=1.0): 
             return
 
-        if self.pill_count > 0:
-            self.pill_count -= 1
-            # Lock the button again after dispensing
-            self.can_take_medicine = False 
-            
-            print(f"Medicine dispensed. Pills remaining: {self.pill_count}")
-            self.send_rotate_command() 
-        else:
-            print("Cannot dispense: No pills left!")
+        if self.pill_count <= 0:
             self.show_empty_dispenser_warning()
-
-        """Checks inventory and authorization before dispensing."""
-        if not self.check_debounce(): return 
-        
-        # 1. Double-check the authorization lock
-        if not self.can_take_medicine:
-            print("Action blocked: No active medication schedule.")
             return
 
-        # 2. Proceed with dispensing if pills are available
-        if self.pill_count > 0:
-            self.pill_count -= 1
+        is_last_pill = (self.pill_count == 1)
+        
+        self.pill_count -= 1
+        self.save_inventory() 
+        self.send_rotate_command()
+        
+        if self.buzzer_event:
+            self.buzzer_event.cancel()
+            self.buzzer_event = None
+        try: GPIO.output(17, 0)
+        except Exception: pass
             
-            # 3. Lock the button immediately after one use
-            self.can_take_medicine = False 
-            
-            print(f"Medicine dispensed. Pills remaining: {self.pill_count}")
-            self.send_rotate_command() 
-        else:
-            print("Cannot dispense: No pills left!")
-            self.show_empty_dispenser_warning()
+        self.medication_pending = False
+        self.can_take_medicine = False
+        
+        if self.root and self.root.has_screen('vitals'):
+            vitals_screen = self.root.get_screen('vitals')
+            if 'btn_take_medicine' in vitals_screen.ids:
+                med_btn = vitals_screen.ids.btn_take_medicine
+                med_btn.disabled = True
+                med_btn.background_color = (0.3, 0.3, 0.3, 1)
+                
+            if vitals_screen.ids.btn_scan.text == "SAVED":
+                vitals_screen.ids.vitals_status.text = "MEDICINE DISPENSED! CONSULTING AI..."
+                vitals_screen.ids.vitals_status.color = (0.07, 0.5, 0.17, 1)
+                Clock.schedule_once(partial(vitals_screen.redirect_to_ai, vitals_screen.bp_sys, vitals_screen.bp_dia, vitals_screen.bp_bpm), 1.5)
+            else:
+                vitals_screen.ids.vitals_status.text = "MEDICINE DISPENSED! PRESS RECORD."
+                vitals_screen.ids.vitals_status.color = (0.2, 0.7, 0.5, 1)
 
+        if is_last_pill:
+            Clock.schedule_once(lambda dt: self.show_empty_dispenser_warning(), 2.0)
 
     def show_empty_dispenser_warning(self):
-        """Medical-themed critical alert for an empty dispenser."""
         if self._is_warning_open:
             return
         self._is_warning_open = True 
         
         content = BoxLayout(orientation='vertical', padding="20dp", spacing="15dp")
-        
         warning_msg = Label(
-            text="CRITICAL: No medication detected.\n\nPlease load the physical chamber and manually add [+1] to the software inventory.",
+            text="Medication dispenser is currently empty.\n\nPlease refill the physical chamber and update the system inventory.",
             halign="center", 
             valign="middle",
-            font_size="16sp",
-            color=(1, 0.3, 0.3, 1) # Light red warning text
+            font_size="18sp",
+            color=(0.2, 0.2, 0.2, 1) 
         )
         warning_msg.bind(size=warning_msg.setter('text_size')) 
         
         close_btn = Button(
             text="ACKNOWLEDGE", 
             size_hint_y=None, 
-            height="55dp",
-            font_size="16sp",
-            bold=True,
+            height="80dp",
+            font_size="20sp",
+            bold=True,  
             background_normal='',
-            background_color=(0.8, 0.2, 0.2, 1) # Emergency red button
+            background_color=(0.8, 0.2, 0.2, 1) 
         )
         
         content.add_widget(warning_msg)
         content.add_widget(close_btn)
         
         empty_popup = Popup(
-            title="[!] ALERT: DISPENSER EMPTY",
-            content=content,
-            size_hint=(0.8, 0.4),
-            auto_dismiss=False, 
-            title_size="18sp",
-            title_color=(1, 1, 1, 1),
-            separator_color=(0.9, 0.1, 0.1, 1), # Red divider line
-            background_color=(0.15, 0.05, 0.05, 1) # Subtle red-tinted background
-        )
-        
-        def on_popup_dismiss(*args):
-            self._is_warning_open = False
-            
-        empty_popup.bind(on_dismiss=on_popup_dismiss)
-        close_btn.bind(on_release=empty_popup.dismiss)
-        empty_popup.open()
-
-        """Generates and opens a warning popup safely."""
-        # 1. Block duplicate pop-ups if one is already on screen
-        if self._is_warning_open:
-            return
-        self._is_warning_open = True 
-        
-        content = BoxLayout(orientation='vertical', padding="20dp", spacing="15dp")
-        
-        warning_msg = Label(
-            text="No pills left in the container!\n\nPlease go to Settings > Pill Management to refill the software inventory.",
-            halign="center", 
-            valign="middle",
-            font_size="16sp"
-        )
-        warning_msg.bind(size=warning_msg.setter('text_size')) 
-        
-        close_btn = Button(
-            text="UNDERSTOOD", 
-            size_hint_y=None, 
-            height="55dp",
-            font_size="16sp",
-            bold=True,
-            background_normal='',
-            background_color=(0.8, 0.2, 0.2, 1)
-        )
-        
-        content.add_widget(warning_msg)
-        content.add_widget(close_btn)
-        
-        empty_popup = Popup(
-            title="DISPENSER EMPTY",
-            content=content,
-            size_hint=(0.75, 0.4),
-            auto_dismiss=False, 
-            title_size="18sp",
-            title_color=(0.9, 0.1, 0.1, 1),
-            separator_color=(0.9, 0.1, 0.1, 1)
-        )
-        
-        # 2. Unlock the pop-up status when it closes
-        def on_popup_dismiss(*args):
-            self._is_warning_open = False
-            
-        empty_popup.bind(on_dismiss=on_popup_dismiss)
-        close_btn.bind(on_release=empty_popup.dismiss)
-        
-        empty_popup.open()
-
-
-
-        """Generates and opens a warning popup safely."""
-        # 1. Block duplicate pop-ups if one is already on screen
-        if self._is_warning_open:
-            return
-        self._is_warning_open = True 
-        
-        content = BoxLayout(orientation='vertical', padding="20dp", spacing="15dp")
-        
-        warning_msg = Label(
-            text="No pills left in the container!\n\nPlease go to Settings > Pill Management to refill the software inventory.",
-            halign="center", 
-            valign="middle",
-            font_size="16sp"
-        )
-        warning_msg.bind(size=warning_msg.setter('text_size')) 
-        
-        close_btn = Button(
-            text="UNDERSTOOD", 
-            size_hint_y=None, 
-            height="55dp",
-            font_size="16sp",
-            bold=True,
-            background_normal='',
-            background_color=(0.8, 0.2, 0.2, 1)
-        )
-        
-        content.add_widget(warning_msg)
-        content.add_widget(close_btn)
-        
-        empty_popup = Popup(
-            title="DISPENSER EMPTY",
-            content=content,
-            size_hint=(0.75, 0.4),
-            auto_dismiss=False, 
-            title_size="18sp",
-            title_color=(0.9, 0.1, 0.1, 1),
-            separator_color=(0.9, 0.1, 0.1, 1)
-        )
-        
-        # 2. Unlock the pop-up status when it closes
-        def on_popup_dismiss(*args):
-            self._is_warning_open = False
-            
-        empty_popup.bind(on_dismiss=on_popup_dismiss)
-        close_btn.bind(on_release=empty_popup.dismiss)
-        
-        empty_popup.open()
-
-        """Generates and opens a warning popup when pill count is 0."""
-        
-        # 1. Create a simple layout for the popup content
-        content = BoxLayout(orientation='vertical', padding="20dp", spacing="15dp")
-        
-        # 2. Add the warning text
-        warning_msg = Label(
-            text="No pills left in the container!\n\nPlease go to Settings > Pill Management to refill the software inventory.",
-            halign="center", 
-            valign="middle",
-            font_size="16sp"
-        )
-        # Ensure the text wraps cleanly inside the popup
-        warning_msg.bind(size=warning_msg.setter('text_size')) 
-        
-        # 3. Add an acknowledgment button
-        close_btn = Button(
-            text="UNDERSTOOD", 
-            size_hint_y=None, 
-            height="55dp",
-            font_size="16sp",
-            bold=True,
-            background_normal='',
-            background_color=(0.8, 0.2, 0.2, 1) # Red for alert
-        )
-        
-        # Assemble the content
-        content.add_widget(warning_msg)
-        content.add_widget(close_btn)
-        
-        # 4. Create the actual Popup window
-        empty_popup = Popup(
-            title="DISPENSER EMPTY",
-            content=content,
-            size_hint=(0.75, 0.4),
-            auto_dismiss=False, # Forces the user to click the button
-            title_size="18sp",
-            title_color=(0.9, 0.1, 0.1, 1),
-            separator_color=(0.9, 0.1, 0.1, 1)
-        )
-        
-        # 5. Bind the button to close the popup and open it
-        close_btn.bind(on_release=empty_popup.dismiss)
-        empty_popup.open()
-
-
-
-        """Decreases the pill count and sends the ROTATE command to the Arduino."""
-        if self.pill_count > 0:
-            self.pill_count -= 1
-            print(f"Medicine dispensed. Pills remaining: {self.pill_count}")
-            # Call your existing serial command function
-            self.send_rotate_command() 
-        else:
-            print("Cannot dispense: No pills left in the container!")
-
-
-    def on_start(self):
-        try:
-            # '/dev/ttyACM0' is the standard USB serial port for Arduino on a Pi.
-            # If you are using the RX/TX pins, it might be '/dev/serial0'.
-            self.arduino_serial = serial.Serial('/dev/ttyACM0', baudrate=9600, timeout=1)
-            print("Successfully connected to Arduino R4 via Serial.")
-        except serial.SerialException as e:
-            print(f"Failed to connect to Arduino: {e}")
-            self.arduino_serial = None
-
-        
-        """
-        Starts the internal clock to check for alarms.
-        """
-        print("[SYSTEM] Medical Alarm Service: ONLINE (800x480 Mode)")
-        Clock.schedule_interval(self.service_alarm_check, 1)
-
-
-    def service_alarm_check(self, dt):
-        """
-        Runs every 1 second. Checks System Time vs Alarms.json.
-        """
-        # Get current time (e.g., "08:30 PM")
-        now_time = datetime.now().strftime("%I:%M %p").strip().upper()
-        
-        if not os.path.exists(ALARM_FILE):
-            return
-
-        try:
-            with open(ALARM_FILE, "r") as f:
-                alarms = json.load(f)
-            
-            if not alarms:
-                return
-
-            for alarm in alarms:
-                target_time = alarm.get('time', "").strip().upper()
-                
-                # Check for time match
-                if target_time == now_time:
-                    # Debounce: Only trigger if we haven't triggered this minute yet
-                    if self.last_triggered_time != now_time:
-                        print(f"!!! ALARM TRIGGERED: {target_time} !!!")
-                        self.last_triggered_time = now_time
-                        
-                        # Launch the 800x480 Optimized GUI
-                        self.trigger_medical_alert(target_time)
-                    break 
-
-        except Exception as e:
-            print(f"Error in alarm service: {e}")
-
-
-    def trigger_medical_alert(self, message="It is time for your scheduled medication."):
-        """Step 1: Start the first buzz and prepare the UI in the background."""
-        
-        # 1. Setup GPIO and turn buzzer ON for the very first ring
-        try:
-            GPIO.setmode(GPIO.BCM)
-            GPIO.setup(17, GPIO.OUT)
-            GPIO.output(17, 1)  # Turn ON
-        except Exception as e:
-            print(f"Buzzer start error: {e}")
-
-        # 2. Prepare the Popup UI (but don't open it yet)
-        content = Factory.MedicalAlertContent()
-        content.ids.alert_message.text = message
-
-        self._alert_popup = Popup(
-            title="[+] SCHEDULED DOSAGE",
+            title="ATTENTION: MEDICATION REFILL REQUIRED",
             content=content,
             size_hint=(0.8, 0.5),
             auto_dismiss=False, 
             title_size="18sp",
-            title_color=(1, 1, 1, 1),
-            separator_color=(0.2, 0.7, 0.9, 1), # Clinical Blue divider
-            background_color=(0.05, 0.1, 0.15, 1) # Subtle blue-tinted background
+            title_color=(0.8, 0.2, 0.2, 1), 
+            separator_color=(0.8, 0.2, 0.2, 1), 
+            background="",  
+            background_color=(1, 1, 1, 1) 
         )
+        
+        empty_popup.bind(on_dismiss=lambda *x: setattr(self, '_is_warning_open', False))
+        close_btn.bind(on_release=empty_popup.dismiss)
+        empty_popup.open()
 
-        # 3. Define what happens when "PROCEED TO VITALS" is clicked
-        def on_proceed_click(*args):
-            self._alert_popup.dismiss()
+
+    def on_start(self):
+        try:
+            self.arduino_serial = serial.Serial('/dev/ttyACM0', baudrate=9600, timeout=1)
+        except Exception:
+            self.arduino_serial = None
             
-            if self.buzzer_event:
-                self.buzzer_event.cancel()
-                self.buzzer_event = None
-            
-            try:
-                GPIO.output(17, 0)
-            except Exception as e:
-                print(f"Buzzer stop error: {e}")
-                
-            app = App.get_running_app()
-            if app:
-                # --- CALL THE THREAD-SAFE OVERRIDE HERE ---
-                app.unlock_medicine_button()
-                
-                if app.root:
-                    app.root.current = 'vitals'
+        Clock.schedule_interval(self.service_alarm_check, 1)
 
-            self._alert_popup.dismiss()
-            
-            if self.buzzer_event:
-                self.buzzer_event.cancel()
-                self.buzzer_event = None
-            
-            try:
-                GPIO.output(17, 0)
-            except Exception as e:
-                print(f"Buzzer stop error: {e}")
-                
-            # --- THE FIX: Use 'self' directly to trigger Kivy's UI update ---
-            self.can_take_medicine = True
-            print(f"SYSTEM: Button unlocked. can_take_medicine is now {self.can_take_medicine}")
-            
-            # Switch to vitals screen
-            if self.root:
-                self.root.current = 'vitals'
+    def service_alarm_check(self, dt):
+        now_time = datetime.now().strftime("%I:%M %p").strip().upper()
+        if not os.path.exists(ALARM_FILE): return
 
-                
-        content.ids.btn_vitals.bind(on_release=on_proceed_click)
-                
-        # Bind the function to the button
-        content.ids.btn_vitals.bind(on_release=on_proceed_click)
+        try:
+            with open(ALARM_FILE, "r") as f:
+                alarms = json.load(f)
+            if not alarms: return
 
-        # 4. Wait exactly 1 second for the buzzer to ring, THEN trigger Step 2
-        Clock.schedule_once(self.show_popup_and_loop, 1.0)
+            for alarm in alarms:
+                target_time = alarm.get('time', "").strip().upper()
+                if target_time == now_time:
+                    if self.last_triggered_time != now_time:
+                        self.last_triggered_time = now_time
+                        self.trigger_medical_alert(target_time)
+                    break 
+        except Exception: pass
 
+    def trigger_medical_alert(self, message="It is time for your scheduled medication."):
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(17, GPIO.OUT)
+            GPIO.output(17, 1)  
+        except Exception: pass
 
-        # 1. Instantiate the UI from the KV file
         content = Factory.MedicalAlertContent()
-       
-        # 2. Update dynamic text
         content.ids.alert_message.text = message
+        if hasattr(content.ids, 'alert_message'):
+            content.ids.alert_message.color = (0.2, 0.2, 0.2, 1)
 
+        if hasattr(content.ids, 'btn_vitals'):
+            content.ids.btn_vitals.size_hint_y = None
+            content.ids.btn_vitals.height = "80dp"
+            content.ids.btn_vitals.font_size = "22sp"
 
-        # 3. Create the Popup wrapper
         self._alert_popup = Popup(
-            title="MEDICATION REMINDER",
+            title="PATIENT ALERT: MEDICATION DUE",
             content=content,
-            size_hint=(0.75, 0.5),
-            auto_dismiss=False, # Force user to click the button
+            size_hint=(0.8, 0.55),
+            auto_dismiss=False, 
             title_size="16sp",
-            title_color=(0.9, 0.1, 0.1, 1),
-            separator_color=(0.9, 0.1, 0.1, 1),
-            background_color=(0.15, 0.15, 0.15, 1) # Dark theme matching
+            title_color=(0.1, 0.2, 0.4, 1), 
+            separator_color=(0.2, 0.6, 0.9, 1), 
+            background="",  
+            background_color=(1, 1, 1, 1) 
         )
 
-
-        # 4. Bind the proceed button to dismiss the popup, stop buzzer, and change screen
         def on_proceed_click(*args):
-            # 1. Dismiss the popup FIRST
+            if self.auto_dismiss_event:
+                self.auto_dismiss_event.cancel()
+                self.auto_dismiss_event = None
+                
             self._alert_popup.dismiss()
-           
-            # 2. Stop the buzzer safely
-            GPIO.cleanup()
-               
-            # 3. Redirect to the vitals screen AFTER dismissing
-            from kivy.app import App
-            app = App.get_running_app()
-            if app and app.root:
-                app.root.current = 'vitals'
-               
+            if self.buzzer_event:
+                self.buzzer_event.cancel()
+                self.buzzer_event = None
+            try: GPIO.output(17, 0)
+            except Exception: pass
+            self.unlock_medicine_button()
+            if self.root: self.root.current = 'vitals'
+
         content.ids.btn_vitals.bind(on_release=on_proceed_click)
+        Clock.schedule_once(self.show_popup_and_loop, 1.0)
+        
+        if self.auto_dismiss_event:
+            self.auto_dismiss_event.cancel()
+        self.auto_dismiss_event = Clock.schedule_once(self.auto_dismiss_alarm, 300.0)
 
+    def auto_dismiss_alarm(self, dt):
+        self.auto_dismiss_event = None
+        if self._alert_popup:
+            self._alert_popup.dismiss()
+        
+        if self.buzzer_event:
+            self.buzzer_event.cancel()
+            self.buzzer_event = None
+            
+        try: GPIO.output(17, 0)
+        except Exception: pass
+        
+        self.send_warning_command()
+        print("Alarm automatically dismissed. WARNING sent to Arduino.")
 
-        # 5. Open the Popup and trigger the buzzer (1 sec ON, 1 sec OFF)
-        self._alert_popup.open()
-    
+    def send_warning_command(self):
+        if self.root and self.root.has_screen('vitals'):
+            vitals_screen = self.root.get_screen('vitals')
+            if hasattr(vitals_screen, 'ser') and vitals_screen.ser and vitals_screen.ser.is_open:
+                try:
+                    vitals_screen.ser.write(b"WARNING\n")
+                    return
+                except Exception: pass
+
+        if self.arduino_serial and self.arduino_serial.is_open:
+            try: self.arduino_serial.write(b"WARNING\n")
+            except Exception: pass
     
     def show_popup_and_loop(self, dt):
-        """Step 2: Turn off the first buzz, show the popup, and start looping."""
-        
-        # 1. Turn buzzer OFF (finishing the initial 1-second ring)
-        try:
-            GPIO.output(17, 0)
-        except Exception as e:
-            print(f"Buzzer stop error: {e}")
-
-        # 2. Render the pop-up on the screen
-        if self._alert_popup:
-            self._alert_popup.open()
-
-        # 3. Start the continuous 1-second interval loop while popup is active
+        try: GPIO.output(17, 0)
+        except Exception: pass
+        if self._alert_popup: self._alert_popup.open()
         self.buzzer_state = False
         self.buzzer_event = Clock.schedule_interval(self.toggle_buzzer, 1.0)
 
-
     def toggle_buzzer(self, dt):
-        """Step 3: Continuous ON/OFF loop triggered by the Clock interval."""
         try:
             self.buzzer_state = not self.buzzer_state
             GPIO.output(17, 1 if self.buzzer_state else 0)
-        except Exception as e:
-            print(f"Buzzer toggle error: {e}")
-
+        except Exception: pass
 
     def save_chat_message(self, role, text):
-        """Saves messages to the history file."""
         message_data = {"role": role, "text": text, "timestamp": str(datetime.now())}
         self.chat_history.append(message_data)
         try:
@@ -2560,69 +2051,29 @@ class PagtultolApp(App):
                 json.dump(self.chat_history, f, indent=4)
         except: pass
 
-
     def clear_chat_data(self):
-        """Clears the chat storage."""
         self.chat_history = []
         try:
             with open(CHAT_FILE, "w") as f:
                 json.dump([], f)
         except: pass
 
-
-# --- SERIAL COMMAND LOGIC ---
     def send_rotate_command(self):
-        """Sends the ROTATE command to the Arduino via Serial."""
+        if self.root and self.root.has_screen('vitals'):
+            vitals_screen = self.root.get_screen('vitals')
+            if hasattr(vitals_screen, 'ser') and vitals_screen.ser and vitals_screen.ser.is_open:
+                try:
+                    vitals_screen.ser.write(b"ROTATE\n")
+                    return
+                except Exception: pass
+
         if self.arduino_serial and self.arduino_serial.is_open:
-            try:
-                # We send the command as a byte string, ending with a newline character
-                self.arduino_serial.write(b"ROTATE\n")
-                print("Command sent: ROTATE")
-            except Exception as e:
-                print(f"Error sending serial command: {e}")
-        else:
-            print("Cannot send command: Serial port is not open.")
-
-        """Sends the ROTATE command to the Arduino R4 WiFi."""
-        
-        # Replace this IP address with the actual IP of your Arduino R4 WiFi
-        # The '/rotate' part matches the endpoint you set up on the Arduino
-        r4_wifi_url = "http://192.168.1.100/rotate" 
-        
-        # Callback for a successful connection
-        def on_success(request, result):
-            print("Success: ROTATE command sent to R4 WiFi.")
-            
-        # Callback if the Arduino is unreachable or returns an error
-        def on_failure(request, result):
-            print(f"Failed to connect to R4 WiFi. Result: {result}")
-            
-        # Callback if there is a network error (e.g., Pi is disconnected)
-        def on_error(request, error):
-            print(f"Network Error: Could not reach R4 WiFi. Error: {error}")
-
-        # Send the request in the background so the UI doesn't freeze
-        print(f"Attempting to send command to {r4_wifi_url}...")
-        UrlRequest(
-            url=r4_wifi_url, 
-            on_success=on_success, 
-            on_failure=on_failure, 
-            on_error=on_error,
-            timeout=5 # Gives up after 5 seconds if no response
-        )
-
+            try: self.arduino_serial.write(b"ROTATE\n")
+            except Exception: pass
 
     def on_stop(self):
-        """Ensure the serial port is safely closed when the app exits."""
         if self.arduino_serial and self.arduino_serial.is_open:
             self.arduino_serial.close()
-            print("Serial connection closed.")
-
-
-
-    
-
-
 
     
 if __name__ == "__main__":
