@@ -1,3 +1,5 @@
+#©2025 Fitz Tompong. All Rights Reserved
+
 import os
 from kivy.config import Config
 import json
