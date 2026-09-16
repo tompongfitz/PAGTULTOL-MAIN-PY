@@ -1,3 +1,5 @@
+//©2025 Fitz Tompong. All Rights Reserved
+
 #include <SPI.h>
 #include <LoRa.h>
 #include "BP.h"
